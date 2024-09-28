@@ -2,9 +2,28 @@
 import MenuWork from '@/components/MenuWork.vue'
 import DialogCreateSession from '@/components/DialogCreateSession.vue'
 import NavigationWork from '@/components/NavigationWork.vue'
-import { ref, computed } from 'vue'
-
+import { Icons } from '@/components/Icons.vue'
+import { ref, computed, watchEffect } from 'vue'
 import { useDisplay } from 'vuetify'
+import { useUsers } from '../../../../hooks/use-users'
+import { useRoute } from 'vue-router'
+import { useUserSession } from '../../../../hooks/use-user-session'
+import router from '@/routes'
+
+// Sacamos el token del User para las APIS
+const token = localStorage.getItem('token') || ''
+const { getById } = useUsers()
+const { getSessionsAsCollaboratorQuery, getSessionsAsHostQuery } = useUserSession(token)
+
+const route = useRoute() // Obtenemos la ruta actual
+const search = ref('') // Modelo para la búsqueda
+
+const UserPerfil = ref(null)
+const SessionsNashi = ref(null)
+const HostinSessions = ref(null) // Almacenar las sesiones donde el usuario es anfitrión
+
+// Obtener el id del usuario desde los params
+const userId = Number(route.params.userId)
 
 // Estado del drawer y variantes para mini/overlay
 const drawer = ref(true)
@@ -15,29 +34,54 @@ const clipped = ref(true)
 const { smAndUp } = useDisplay()
 const isLargeScreen = computed(() => smAndUp.value)
 
-// Modelo para el campo de búsqueda
-const search = ref('')
-
 // Estado del diálogo
 const dialogVisible = ref(false)
 
-// Sesiones colaborando (contenido estático por ahora)
-const sessions = ref([
-  { id: 1, name: 'Sesión UI/UX', description: 'Proyecto UI/UX en progreso' },
-  { id: 2, name: 'Backend Dev', description: 'Desarrollo del backend' },
-  { id: 3, name: 'Mobile App', description: 'App móvil colaborativa' }
-])
-
-// Filtrar sesiones basado en búsqueda
-const filteredSessions = computed(() =>
-  sessions.value.filter((session) =>
-    session.name.toLowerCase().includes(search.value.toLowerCase())
-  )
-)
+// Filtrar sesiones colaborando basado en la búsqueda
+const filteredSessions = computed(() => {
+  if (SessionsNashi?.value) {
+    return SessionsNashi.value.filter((session: any) =>
+      session.name.toLowerCase().includes(search.value.toLowerCase())
+    )
+  }
+  return []
+})
 
 // Redirigir a la sesión seleccionada
 function redirigirASesion(sessionId: number) {
-  console.log('Redirigiendo a sesión:', sessionId)
+  router.push({
+    path: `/workspace/${route.params.userId}/session/${sessionId}`
+  })
+}
+
+// Usar `getById` para obtener los datos del usuario
+const { data: userData, isLoading, isError, error } = getById(userId)
+const { data: collaboratorSessions } = getSessionsAsCollaboratorQuery(userId)
+const { data: hostSessions } = getSessionsAsHostQuery(userId)
+
+// Monitorear cambios en los datos del usuario y sesiones
+watchEffect(() => {
+  SessionsNashi.value = collaboratorSessions?.value
+  HostinSessions.value = hostSessions?.value // Guardar las sesiones donde el usuario es anfitrión
+  if (!isLoading.value && userData.value) {
+    UserPerfil.value = userData.value
+    console.log('Perfil del usuario:', UserPerfil.value)
+  } else if (isError.value) {
+    console.error('Error obteniendo el perfil del usuario:', error.value)
+  }
+})
+
+// Función para abrir el diálogo de creación de sesión
+function abrirDialogoCreacion() {
+  dialogVisible.value = true
+}
+
+// Función para enviar invitación
+function sendInvitacion() {
+  router.push(`/workspace/${userId}/enviar-invitacion`)
+}
+function invitationsReceived() {
+  router.push(`/workspace/${userId}/invitations-received`)
 }
 </script>
 
@@ -55,9 +99,10 @@ function redirigirASesion(sessionId: number) {
       >
         <v-list>
           <v-list-item title="ESPACIO DE TRABAJO" class="text-center"></v-list-item>
-          <NavigationWork />
+          <NavigationWork :hostSessions="HostinSessions" />
+          <!-- Pasar las sesiones donde el usuario es host -->
 
-          <!-- Search Bar debajo de NavigationWork -->
+          <!-- Campo de búsqueda debajo del espacio de trabajo -->
           <v-list-item>
             <v-text-field
               v-model="search"
@@ -68,22 +113,33 @@ function redirigirASesion(sessionId: number) {
               color="secondary"
             />
           </v-list-item>
+
+          <!-- Botones debajo del marco de trabajo -->
+          <v-divider></v-divider>
+          <v-list-item class="justify-center mt-2">
+            <v-btn color="secondary" block @click="sendInvitacion"> Enviar invitación </v-btn>
+          </v-list-item>
+          <v-list-item class="justify-center">
+            <v-btn color="secondary" block @click="invitationsReceived">
+              Invitaciones Recibidas
+            </v-btn>
+          </v-list-item>
         </v-list>
       </v-navigation-drawer>
 
       <!-- App Bar con botón para crear nueva sesión -->
       <v-app-bar title="Proyectos" color="primary" :clipped-left="clipped">
         <v-btn
-          class="flex justify-end"
+          class="ml-auto mr-4"
           color="secondary"
           size="small"
           variant="flat"
-          @click="dialogVisible = true"
+          @click="abrirDialogoCreacion"
         >
           Crear nueva Sesión
-          <v-icon right>mdi-plus</v-icon>
+          <Icons.add size="15" />
         </v-btn>
-        <MenuWork :user="{ name: 'John Doe', email: 'john.doe@example.com', avatar: 'JD' }" />
+        <MenuWork :user="userData" />
       </v-app-bar>
 
       <!-- Importar el DialogComponent -->
@@ -91,20 +147,17 @@ function redirigirASesion(sessionId: number) {
         v-model:modelValue="dialogVisible"
         title="Crear nueva sesión"
         message="Formulario para crear una nueva sesión"
+        @submit="crearSesion"
+        @close="dialogVisible = false"
       />
 
       <!-- Main content -->
       <v-main>
         <v-container>
           <!-- Título centrado -->
-          <h1
-            class="text-center text-lg font-semibold mb-8"
-            :style="{ color: $vuetify.theme.themes.myCustomTheme.primary }"
-          >
-            Sesiones Colaborando
-          </h1>
+          <h1 class="text-center text-lg font-semibold mb-8">Sesiones Colaborando</h1>
 
-          <!-- Lista de tarjetas (card list) de sesiones -->
+          <!-- Lista de tarjetas (card list) de sesiones colaborando -->
           <v-row>
             <v-col v-for="session in filteredSessions" :key="session.id" cols="12" sm="6" md="4">
               <v-card
@@ -112,12 +165,8 @@ function redirigirASesion(sessionId: number) {
                 @click="redirigirASesion(session.id)"
                 color="background"
               >
-                <v-card-title>
-                  {{ session.name }}
-                </v-card-title>
-                <v-card-subtitle>
-                  {{ session.description }}
-                </v-card-subtitle>
+                <v-card-title>{{ session.name }}</v-card-title>
+                <v-card-subtitle>{{ session.description }}</v-card-subtitle>
                 <v-card-actions>
                   <v-btn color="primary" @click="redirigirASesion(session.id)">
                     Entrar

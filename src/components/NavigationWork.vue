@@ -1,7 +1,36 @@
+<script lang="ts" setup>
+import { ref, defineProps, type PropType } from 'vue'
+import { Icons } from './Icons.vue'
+import router from '@/routes'
+import { useRoute } from 'vue-router'
+import type { SessionsI } from '@/lib/querys/interfaces'
+
+// Props para recibir las sesiones donde el usuario es anfitrión
+const props = defineProps({
+  hostSessions: {
+    type: Array as PropType<SessionsI[]>,
+    default: () => []
+  }
+})
+const route = useRoute()
+// Definir el workspace por defecto
+const selectedWorkspace = ref({
+  name: 'Marco de Trabajo',
+  logo: 'https://via.placeholder.com/24x24.png?text=TP'
+})
+
+// Función para redirigir a la sesión seleccionada
+function redirigirASesion(sessionId: number) {
+  // Redirigir a la sesión seleccionada
+  router.push({
+    path: `/workspace/${route.params.userId}/session/${sessionId}`
+  })
+}
+</script>
+
 <template>
-  <v-menu offset-y class="#0ee199">
+  <v-menu offset-y>
     <template v-slot:activator="{ props }">
-      <!-- Botón activador -->
       <v-btn v-bind="props" class="d-flex align-center" color="secondary">
         <v-avatar size="24" class="mr-2">
           <v-img :src="selectedWorkspace.logo" />
@@ -25,26 +54,28 @@
         </v-list-item-content>
       </v-list-item>
 
-      <!-- Título de las sesiones -->
+      <!-- Título de las sesiones como anfitrión -->
       <v-divider></v-divider>
       <v-list-item-title class="pl-4 pt-2 text-xs font-semibold">
         Sesiones como Anfitrión
       </v-list-item-title>
 
       <!-- Si no hay sesiones, mostrar mensaje -->
-      <template v-if="sessions.length === 0">
+      <template v-if="hostSessions.length === 0">
         <v-list-item>
           <v-list-item-content>
-            <v-list-item-title class="text-gray-500">
-              No hay sesiones creadas...
-            </v-list-item-title>
+            <v-list-item-title class="text-gray-500">No hay sesiones creadas...</v-list-item-title>
           </v-list-item-content>
         </v-list-item>
       </template>
 
-      <!-- Lista de sesiones creadas por el usuario -->
+      <!-- Lista de sesiones como anfitrión -->
       <template v-else>
-        <v-list-item v-for="session in sessions" :key="session.id">
+        <v-list-item
+          v-for="session in hostSessions"
+          :key="session.id"
+          @click="redirigirASesion(session.id)"
+        >
           <v-list-item-avatar>
             <v-avatar size="24">
               <v-img :src="session.logo" />
@@ -59,66 +90,6 @@
   </v-menu>
 </template>
 
-<script lang="ts" setup>
-import { ref } from 'vue'
-import { Icons } from './Icons.vue'
-
-// Definir el workspace por defecto
-const selectedWorkspace = ref({
-  name: 'Marco de Trabajo',
-  logo: 'https://via.placeholder.com/24x24.png?text=TP'
-})
-
-// Lista estática de sesiones creadas por el usuario (inicialmente vacía para ejemplo)
-const sessions = ref([
-  {
-    id: 1,
-    name: 'UI/UX SW1',
-    logo: 'https://via.placeholder.com/24x24.png?text=UU'
-  },
-  {
-    id: 1,
-    name: 'UI/UX SW1',
-    logo: 'https://via.placeholder.com/24x24.png?text=UU'
-  }
-]) // Si está vacío, se mostrará el mensaje "No hay sesiones creadas..."
-
-// Función para crear nueva sesión
-function createNewSession() {
-  console.log('Crear nuevo equipo')
-}
-</script>
-
 <style scoped>
-/* Ajustes responsivos utilizando Tailwind y Vuetify */
-.v-list-item-avatar {
-  margin-right: 8px;
-}
-
-.v-list-item-title {
-  font-size: 14px;
-}
-
-/* Estilo para el título de las sesiones */
-.text-xs {
-  font-size: 0.75rem;
-}
-.font-semibold {
-  font-weight: 600;
-}
-.text-gray-500 {
-  color: #6b7280;
-}
-
-/* Adaptabilidad del menú en pantallas pequeñas */
-@media (max-width: 600px) {
-  .v-btn {
-    justify-content: flex-start;
-    font-size: 12px;
-  }
-
-  .v-avatar {
-    display: none; /* Ocultar avatar en pantallas muy pequeñas */
-  }
-}
+/* Estilos adicionales */
 </style>

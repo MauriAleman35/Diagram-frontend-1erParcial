@@ -1,15 +1,21 @@
 <script lang="ts" setup>
-import { ref, defineProps } from 'vue'
+import { ref, defineProps, computed } from 'vue'
 import { Icons } from './Icons.vue' // Importamos el objeto de íconos
+import { logout } from '../../lib/querys/auth/authQuery'
 
 // Definir los props para recibir el 'user'
 const props = defineProps<{
   user: {
     name: string
     email: string
-    avatar: string
+    avatar?: string // Hacer el avatar opcional
   }
 }>()
+
+// Asignar un avatar predeterminado si no se proporciona
+const avatar = computed(() => {
+  return props.user?.avatar || props.user?.name?.charAt(0) || 'U' // Usar 'U' como valor predeterminado
+})
 
 // Estado para mostrar u ocultar el menú del avatar
 const avatarMenu = ref(false)
@@ -23,6 +29,9 @@ const items = ref([
 // Función para manejar el clic en el botón
 function handleClick(item: { title: string }) {
   console.log(`Hiciste clic en: ${item.title}`)
+  if (item.title == 'Desconectar') {
+    logout()
+  }
   // Aquí puedes agregar más lógica si es necesario (por ejemplo, redirigir)
 }
 </script>
@@ -32,19 +41,17 @@ function handleClick(item: { title: string }) {
     <!-- Activador del menú (imagen de perfil predeterminada) -->
     <template v-slot:activator="{ props: activatorProps }">
       <v-avatar v-bind="activatorProps" size="48" color="secondary" class="cursor-pointer">
-        <span>{{ props.user?.avatar }}</span>
+        <span>{{ avatar }}</span>
       </v-avatar>
     </template>
 
     <!-- Contenido del menú que aparece al hacer clic en la imagen de perfil -->
     <v-card class="pa-4" elevation="2">
-      <v-card-text class="text-center" v-if="props.user">
-        <!-- Imagen de perfil dentro del menú -->
-
+      <v-card-text class="text-center" v-if="user">
         <!-- Nombre del usuario -->
-        <div class="font-weight-bold">{{ props.user.name }}</div>
+        <div class="font-weight-bold">{{ user.name }}</div>
         <!-- Correo electrónico del usuario -->
-        <div class="text-muted">{{ props.user.email }}</div>
+        <div class="text-muted">{{ user.email }}</div>
       </v-card-text>
 
       <v-card-text v-else>

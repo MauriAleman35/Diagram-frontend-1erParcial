@@ -15,6 +15,9 @@
   "dependencies": {
     "@joint/plus": "file:C:/Users/Mauri35/Downloads/jointplus/build/package/joint-plus.tgz",
     "@mdi/font": "^7.4.47",
+    "@tanstack/vue-query": "^5.56.2",
+    "axios": "^1.7.7",
+    "jwt-decode": "^4.0.0",
     "lucide-vue": "^0.445.0",
     "lucide-vue-next": "^0.445.0",
     "vue": "^3.4.29",

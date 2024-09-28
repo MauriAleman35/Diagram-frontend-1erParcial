@@ -1,6 +1,6 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "lib/**/*", "hooks/**/*"],
   "exclude": ["src/**/__tests__/*"],
   "compilerOptions": {
     "composite": true,
@@ -8,8 +8,10 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@/components/*": ["components/*"]
+      "@/*": ["./src/*"], // Alias para la carpeta src
+      "@/components/*": ["./src/components/*"], // Alias para componentes
+      "@/lib/*": ["./lib/*"],
+      "@/hooks/*": ["./hooks/*"] // Alias para la carpeta lib
     }
   }
 }
