@@ -86,7 +86,7 @@ function invitationsReceived() {
 </script>
 
 <template>
-  <v-responsive class="border rounded" max-height="700">
+  <v-responsive class="border rounded" max-height="1000">
     <v-app>
       <!-- Drawer con NavigationWork, usando propiedades para hacerlo responsivo -->
       <v-navigation-drawer

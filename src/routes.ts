@@ -30,11 +30,13 @@ const routes = [
   },
   {
     path: '/workspace/:userId/enviar-invitacion', // Nueva ruta para enviar invitación
-    component: SendInvitation
+    component: SendInvitation,
+    meta: { requiresAuth: true }
   },
   {
     path: '/workspace/:userId/invitations-received', // Nueva ruta para enviar invitación
-    component: InvitationsReceived
+    component: InvitationsReceived,
+    meta: { requiresAuth: true }
   },
   {
     path: '/workspace/:userId/session/:sessionId',

@@ -17,6 +17,7 @@
     "@mdi/font": "^7.4.47",
     "@tanstack/vue-query": "^5.56.2",
     "axios": "^1.7.7",
+    "gojs": "^3.0.11",
     "jwt-decode": "^4.0.0",
     "lucide-vue": "^0.445.0",
     "lucide-vue-next": "^0.445.0",
