@@ -50,7 +50,9 @@
   z-index: 1000;
   border-radius: 8px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-  width: 300px;
+  width: 400px;
+  max-height: 80vh; /* Ajuste para altura máxima del modal */
+  overflow-y: auto; /* Scroll para el contenido largo */
 }
 
 .modal input,
@@ -145,6 +147,7 @@
   margin-bottom: 20px;
   font-size: 18px;
 }
+
 .btn-delete {
   background-color: #e74c3c;
   color: white;
@@ -158,4 +161,19 @@
 
 .btn-delete:hover {
   background-color: #c0392b;
+}
+.btn-fk {
+  background-color: #ddd;
+  color: black;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.btn-fk-active {
+  background-color: #3498db;
+  color: white;
 }

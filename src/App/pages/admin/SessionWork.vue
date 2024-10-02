@@ -4,9 +4,7 @@
     <div class="sidebar">
       <button @click="addEntity" class="btn-sidebar">Añadir Entidad</button>
       <button @click="exportDiagram" class="btn-sidebar">Exportar a JSON</button>
-      <button @click="deleteSelected" class="btn-sidebar btn-danger" :disabled="!selectedLink">
-        Eliminar Selección
-      </button>
+      <button @click="deleteSelected" class="btn-sidebar btn-danger">Eliminar Selección</button>
       <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
     </div>
 
@@ -46,7 +44,7 @@
           <option value="boolean">boolean</option>
           <option value="char">char</option>
         </select>
-
+        <!-- Botón para marcar como Primary Key -->
         <button
           @click="togglePrimaryKey"
           :class="['btn-pk', newAttribute.primaryKey ? 'btn-pk-active' : '']"
@@ -54,15 +52,25 @@
           {{ newAttribute.primaryKey ? 'Primary Key [PK]' : 'Marcar como Primary Key' }}
         </button>
 
+        <!-- Botón para marcar como Foreign Key -->
+        <button
+          @click="toggleForeignKey"
+          :class="['btn-fk', newAttribute.foreignKey ? 'btn-fk-active' : '']"
+        >
+          {{ newAttribute.foreignKey ? 'Foreign Key [FK]' : 'Marcar como Foreign Key' }}
+        </button>
+
         <button @click="addAttribute" class="btn-primary">Agregar Atributo</button>
 
+        <!-- Mostrar los atributos en el modal -->
         <ul>
           <li v-for="(attr, index) in attributes" :key="index">
-            {{ attr.name }} ({{ attr.type }}) <span v-if="attr.primaryKey">[PK]</span>
+            {{ attr.name }} ({{ attr.type }})
+            <span v-if="attr.primaryKey">[PK]</span>
+            <span v-if="attr.foreignKey">[FK]</span>
             <button @click="removeAttribute(index)" class="btn-secondary">Eliminar</button>
           </li>
         </ul>
-
         <button @click="saveEntity" class="btn-primary">Guardar</button>
         <button @click="closeModal" class="btn-secondary">Cerrar</button>
       </div>
@@ -74,10 +82,11 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import go from 'gojs'
 import { useDiagrams } from '../../../../hooks/use-diagram' // Asegúrate de importar las funciones de Vue Query para Diagram
-import '../../utils/sessionWork.css' // Asegúrate de que el archivo CSS sea accesible
 import { useRoute } from 'vue-router'
+import '../../utils/sessionWork.css'
 
 // Variables y estados
+const selectedEntity = ref(null)
 let currentDiagramPosition = ref(null) // Variable para guardar la posición
 let currentDiagramScale = ref(1)
 let hasChanges = ref(false) // Variable para detectar si ha habido cambios en el diagrama
@@ -87,9 +96,9 @@ let diagram = null
 let selectedNode = null
 let selectedLink = ref(null)
 const showModal = ref(false)
-const entityName = ref('')
-const newAttribute = ref({ name: '', type: 'int', primaryKey: false })
-const attributes = ref([])
+const entityName = ref('') // Nombre de la entidad en edición
+const newAttribute = ref({ name: '', type: 'int', primaryKey: false }) // Nuevo atributo por agregar
+const attributes = ref([]) // Lista de atributos de la entidad actual
 const route = useRoute()
 let selectedRelationship = ref(null) // Para almacenar la relación seleccionada
 const token = localStorage.getItem('token') || ''
@@ -107,32 +116,24 @@ const { getDiagramBySessionQuery, createDiagramMutation, updateDiagramMutation }
 const loadDiagram = async () => {
   try {
     const response = await getDiagramBySessionQuery(sessionId).refetch() // Intentar obtener el diagrama
-    console.log(response.data.data.data)
     if (response.data && response.data.data) {
-      // Inicializamos el 'diagramJson' con la primera opción
       let diagramJson = response.data.data.data
-
-      // Verificamos si tiene una estructura más profunda (data adicional)
       if (diagramJson && diagramJson.data) {
-        console.log('hola accedio aqui')
-        diagramJson = diagramJson.data // Si tiene 'data' adicional, accede a esa propiedad interior
+        diagramJson = diagramJson.data // Accede a la propiedad interior si existe
       }
-      // Aquí asumimos que el servidor devuelve un JSON con una propiedad "data"
-      // Accedemos al "data" que contiene el diagrama
       if (currentDiagramPosition.value) {
         diagram.position = currentDiagramPosition.value
       }
       if (currentDiagramScale.value) {
         diagram.scale = currentDiagramScale.value
       }
-      // Pasar el JSON de la base de datos a GoJS
       diagram.model = go.Model.fromJson(diagramJson)
       diagramExists.value = true // El diagrama ya existe
     } else {
       console.error('No se encontró ningún diagrama guardado.')
     }
   } catch (error) {
-    console.error('Error al cargar el diagrama o no existe aún:', error)
+    console.error('Error al cargar el diagrama:', error)
     diagramExists.value = false // No existe diagrama en la base de datos
   }
 }
@@ -158,27 +159,40 @@ const initDiagram = () => {
     go.Node,
     'Auto',
     { selectionChanged: onNodeSelected, locationSpot: go.Spot.Center },
+    new go.Binding('location', 'loc', go.Point.parse).makeTwoWay(go.Point.stringify),
     $(go.Shape, 'RoundedRectangle', { fill: 'lightblue', stroke: null }),
+
+    // Panel vertical que contiene el nombre y los atributos del nodo
     $(
       go.Panel,
       'Vertical',
+      // Bloque de texto para el nombre del nodo
       $(
         go.TextBlock,
         { margin: 8, font: 'bold 14px sans-serif', stroke: '#333' },
         new go.Binding('text', 'name')
       ),
+
+      // Panel vertical que contiene los atributos
       $(go.Panel, 'Vertical', new go.Binding('itemArray', 'attributes'), {
+        // Plantilla para cada atributo
         itemTemplate: $(
           go.Panel,
           'Horizontal',
           $(
             go.TextBlock,
             { margin: 4, font: '12px sans-serif', stroke: '#333' },
-            new go.Binding(
-              'text',
-              '',
-              (attr) => `${attr.name} (${attr.type}) ${attr.primaryKey ? '[PK]' : ''}`
-            )
+            // Binding para mostrar los atributos y sus claves primarias/foráneas
+            new go.Binding('text', '', (attr) => {
+              let displayText = `${attr.name} (${attr.type})`
+              if (attr.primaryKey) {
+                displayText += ' [PK]'
+              }
+              if (attr.foreignKey) {
+                displayText += ' [FK]'
+              }
+              return displayText
+            })
           )
         )
       })
@@ -188,14 +202,10 @@ const initDiagram = () => {
   diagram.linkTemplate = $(
     go.Link,
     { relinkableFrom: true, relinkableTo: true, selectionChanged: onLinkSelected },
-    $(go.Shape, new go.Binding('strokeDashArray', 'relationship', getDashArray)), // Línea continua o discontinua
-    $(
-      go.Shape,
-      new go.Binding('toArrow', 'relationship', getArrowType),
-      new go.Binding('fill', 'relationship', (rel) => (rel === 'Composicion' ? 'black' : null))
-    ),
+    $(go.Shape, new go.Binding('strokeDashArray', 'relationship', getDashArray)),
+    $(go.Shape, new go.Binding('toArrow', 'relationship', getArrowType)),
     $(go.TextBlock, new go.Binding('text', 'relationshipText'), {
-      segmentOffset: new go.Point(20, -10) // Posición del texto de la relación
+      segmentOffset: new go.Point(20, -10)
     })
   )
 
@@ -211,42 +221,37 @@ const initDiagram = () => {
 }
 
 // Añadir nueva entidad (nodo) al diagrama
-// Añadir nueva entidad (nodo) al diagrama
 const addEntity = async () => {
   diagram.startTransaction('Add Entity')
   diagram.model.addNodeData({ name: 'Nueva Entidad', attributes: [], key: idCounter++ })
   diagram.commitTransaction('Add Entity')
 
-  // Si es la primera entidad y el diagrama aún no existe, lo creamos
   if (!diagramExists.value) {
     const json = diagram.model.toJson()
     const jsonoficial = JSON.parse(json)
-    jsonoficial.class = 'go.GraphLinksModel' // Corregir la clase si es necesario
+    jsonoficial.class = 'go.GraphLinksModel'
 
-    // Crear el diagrama en la base de datos solo si no existe
     try {
       await createDiagramMutation.mutateAsync({ sessionId: sessionId, data: jsonoficial })
-      diagramExists.value = true // Marcar que el diagrama ya existe
+      diagramExists.value = true
       alert('Diagrama creado con éxito.')
     } catch (error) {
       console.error('Error al crear el diagrama:', error)
     }
   } else {
-    updateDiagram() // Si el diagrama ya existe, simplemente lo actualizamos
+    updateDiagram() // Actualizar el diagrama
   }
 }
+
 // Función para actualizar el diagrama existente
 const updateDiagram = async () => {
-  // Solo actualizar si hubo cambios
-
   const json = diagram.model.toJson()
   const jsonoficial = JSON.parse(json)
-  jsonoficial.class = 'go.GraphLinksModel' // Asegurarse de que la clase sea correcta
+  jsonoficial.class = 'go.GraphLinksModel'
 
-  // Enviar la actualización al backend
   try {
     await updateDiagramMutation.mutateAsync({ sessionId: sessionId, data: jsonoficial })
-    hasChanges.value = false // Reiniciar el indicador de cambios después de la actualización
+    hasChanges.value = false
     console.log('Diagrama actualizado.')
     currentDiagramPosition.value = diagram.position
     currentDiagramScale.value = diagram.scale
@@ -254,18 +259,65 @@ const updateDiagram = async () => {
     console.error('Error al actualizar el diagrama:', error)
   }
 }
-// Función para exportar el diagrama a JSON
-const exportDiagram = () => {
-  const json = diagram.model.toJson()
-  const jsonoficial = JSON.parse(json)
 
-  // Corregir la propiedad "class" si es necesario
-  if (jsonoficial.class === '_GraphLinksModel') {
-    jsonoficial.class = 'go.GraphLinksModel'
+// Guardar los cambios en la entidad
+const saveEntity = () => {
+  if (!selectedNode) {
+    console.error('No hay ninguna entidad seleccionada para guardar.')
+    return
   }
 
-  console.log('Exported JSON: ', jsonoficial)
-  alert('Diagrama exportado a JSON. Revisa la consola.')
+  // Comenzar la transacción para actualizar la entidad
+  diagram.startTransaction('Update Entity')
+
+  // Actualizar el nombre de la entidad y sus atributos
+  diagram.model.setDataProperty(selectedNode.data, 'name', entityName.value)
+  diagram.model.setDataProperty(selectedNode.data, 'attributes', [...attributes.value])
+
+  // Finalizar la transacción
+  diagram.commitTransaction('Update Entity')
+
+  // Cerrar el modal
+  closeModal()
+
+  console.log('Entidad actualizada y modal cerrado.')
+}
+// Cerrar el modal
+const closeModal = () => {
+  showModal.value = false
+  selectedNode = null
+}
+
+// Alternar la opción de Primary Key
+const togglePrimaryKey = () => {
+  newAttribute.value.primaryKey = !newAttribute.value.primaryKey
+}
+const toggleForeignKey = () => {
+  newAttribute.value.foreignKey = !newAttribute.value.foreignKey
+}
+// Añadir un nuevo atributo
+const addAttribute = () => {
+  if (newAttribute.value.name && newAttribute.value.type) {
+    attributes.value.push({ ...newAttribute.value })
+    // Reiniciar el estado del atributo para el siguiente ingreso
+    newAttribute.value.name = ''
+    newAttribute.value.type = 'int'
+    newAttribute.value.primaryKey = false
+    newAttribute.value.foreignKey = false
+  }
+}
+// Eliminar un atributo
+const removeAttribute = (index) => {
+  attributes.value.splice(index, 1) // Elimina el atributo del array
+  updateNodeAttributes() // Actualiza el nodo en el diagrama
+}
+
+const updateNodeAttributes = () => {
+  if (selectedNode) {
+    diagram.startTransaction('Update Attributes')
+    diagram.model.setDataProperty(selectedNode.data, 'attributes', [...attributes.value])
+    diagram.commitTransaction('Update Attributes')
+  }
 }
 
 // Función para eliminar la selección (nodo o relación)
@@ -273,26 +325,31 @@ const deleteSelected = () => {
   if (selectedLink.value) {
     diagram.commandHandler.deleteSelection()
     selectedLink.value = null // Limpiar la selección
+  } else if (selectedEntity.value) {
+    diagram.select(selectedEntity.value)
+    diagram.commandHandler.deleteSelection()
+    selectedEntity.value = null
+    attributes.value = []
+    showModal.value = false
   }
 }
 
-// Función para obtener el tipo de flecha
+// Funciones relacionadas con las relaciones
 const getArrowType = (relationship) => {
   switch (relationship) {
     case 'Generalizacion':
-      return 'OpenTriangle' // Flecha abierta para la generalización
+      return 'OpenTriangle'
     case 'Agregacion':
-      return 'Diamond' // Diamante sin relleno
+      return 'Diamond'
     case 'Composicion':
-      return 'Diamond' // Diamante con relleno negro
+      return 'Diamond'
     case 'Recursividad':
-      return '' // Sin flecha, solo línea
+      return ''
     default:
-      return '' // Asociación normal, sin flecha
+      return ''
   }
 }
 
-// Función para obtener el tipo de línea (continua o discontinua)
 const getDashArray = (relationship) => {
   if (relationship === 'Recursividad') {
     return [4, 2]
@@ -300,14 +357,12 @@ const getDashArray = (relationship) => {
   return null
 }
 
-// Seleccionar tipo de relación
 const selectRelationship = (type) => {
   selectedRelationship.value = type
   selectedEntities.value = []
   alert(`Has seleccionado: ${type}. Ahora selecciona dos entidades para relacionarlas.`)
 }
 
-// Crear relación entre dos entidades seleccionadas
 const createRelationship = () => {
   if (selectedEntities.value.length === 2) {
     diagram.startTransaction('Add Relationship')
@@ -339,7 +394,7 @@ const createRelationship = () => {
       from: fromNode.key,
       to: toNode.key,
       relationship: selectedRelationship.value,
-      relationshipText: relationshipText, // Asigna la multiplicidad al enlace
+      relationshipText: relationshipText,
       key: linkCounter++ // Asigna un key positivo único
     })
 
@@ -351,63 +406,33 @@ const createRelationship = () => {
 // Cuando se selecciona un nodo, abrir el modal de edición
 const onNodeSelected = (node) => {
   if (node.isSelected) {
-    selectedNode = node
+    selectedNode = node // Asegúrate de que selectedNode esté correctamente asignado
+    selectedEntity.value = node
     entityName.value = node.data.name
     attributes.value = node.data.attributes || []
-    showModal.value = true
-  }
-}
-
-// Cerrar el modal
-const closeModal = () => {
-  showModal.value = false
-  selectedNode = null
-}
-
-// Alternar la opción de Primary Key
-const togglePrimaryKey = () => {
-  newAttribute.value.primaryKey = !newAttribute.value.primaryKey
-}
-
-// Añadir un nuevo atributo
-const addAttribute = () => {
-  if (newAttribute.value.name && newAttribute.value.type) {
-    attributes.value.push({ ...newAttribute.value })
-    newAttribute.value.name = ''
-    newAttribute.value.type = 'int'
-    newAttribute.value.primaryKey = false
-  }
-}
-
-// Eliminar un atributo
-const removeAttribute = (index) => {
-  attributes.value.splice(index, 1)
-}
-
-// Guardar los cambios en la entidad
-const saveEntity = () => {
-  if (selectedNode) {
-    diagram.startTransaction('Update Entity')
-    diagram.model.setDataProperty(selectedNode.data, 'name', entityName.value)
-    diagram.model.setDataProperty(selectedNode.data, 'attributes', [...attributes.value])
-    diagram.commitTransaction('Update Entity')
-    closeModal()
+    showModal.value = true // Muestra el modal de edición si es necesario
+    console.log('Nodo seleccionado:', node.data)
+  } else {
+    selectedNode = null // Limpia selectedNode si no hay ningún nodo seleccionado
+    selectedEntity.value = null
+    showModal.value = false
+    console.log('Nodo deseleccionado')
   }
 }
 
 // Eliminar relación seleccionada
 const onLinkSelected = (link) => {
   if (link.isSelected) {
-    selectedLink.value = link // Almacena el enlace seleccionado
+    selectedLink.value = link
   } else {
-    selectedLink.value = null // Si se deselecciona, limpiamos la variable
+    selectedLink.value = null
   }
 }
 
 // Inicializar el diagrama al montar el componente
 onMounted(() => {
   initDiagram() // Inicializa el diagrama en el frontend
-  loadDiagram() // Intenta cargar el diagrama desde la base de datos
+  loadDiagram() // Cargar el diagrama desde la base de datos
 
   // Configurar el intervalo de actualización automática
   intervalId = setInterval(() => {
@@ -417,6 +442,6 @@ onMounted(() => {
 
 // Limpiar el intervalo cuando se desmonte el componente
 onBeforeUnmount(() => {
-  clearInterval(intervalId) // Detener el intervalo cuando el componente se desmonta
+  clearInterval(intervalId)
 })
 </script>
