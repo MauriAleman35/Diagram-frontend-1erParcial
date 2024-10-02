@@ -7,8 +7,7 @@
       <button @click="deleteSelected" class="btn-sidebar btn-danger" :disabled="!selectedLink">
         Eliminar Selección
       </button>
-
-      <!-- Nuevo botón -->
+      <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
     </div>
 
     <!-- Área del diagrama en el centro -->
@@ -72,11 +71,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import go from 'gojs'
-import '../../utils/sessionWork.css'
+import { useDiagrams } from '../../../../hooks/use-diagram' // Asegúrate de importar las funciones de Vue Query para Diagram
+import '../../utils/sessionWork.css' // Asegúrate de que el archivo CSS sea accesible
+import { useRoute } from 'vue-router'
 
 // Variables y estados
+let currentDiagramPosition = ref(null) // Variable para guardar la posición
+let currentDiagramScale = ref(1)
+let hasChanges = ref(false) // Variable para detectar si ha habido cambios en el diagrama
+let intervalId = null
 const diagramDiv = ref(null)
 let diagram = null
 let selectedNode = null
@@ -85,11 +90,52 @@ const showModal = ref(false)
 const entityName = ref('')
 const newAttribute = ref({ name: '', type: 'int', primaryKey: false })
 const attributes = ref([])
+const route = useRoute()
 let selectedRelationship = ref(null) // Para almacenar la relación seleccionada
-
+const token = localStorage.getItem('token') || ''
 let selectedEntities = ref([]) // Para almacenar las entidades seleccionadas
 let idCounter = 1 // Contador para generar IDs positivos
 let linkCounter = 1 // Contador para generar keys positivos para los enlaces
+const diagramExists = ref(false) // Saber si el diagrama ya existe en la base de datos
+const sessionId = Number(route.params.sessionId) // ID de la sesión actual (puedes obtenerlo dinámicamente)
+
+// Hook para consumir los datos del diagrama
+const { getDiagramBySessionQuery, createDiagramMutation, updateDiagramMutation } =
+  useDiagrams(token)
+
+// Función para cargar el diagrama desde la base de datos
+const loadDiagram = async () => {
+  try {
+    const response = await getDiagramBySessionQuery(sessionId).refetch() // Intentar obtener el diagrama
+    console.log(response.data.data.data)
+    if (response.data && response.data.data) {
+      // Inicializamos el 'diagramJson' con la primera opción
+      let diagramJson = response.data.data.data
+
+      // Verificamos si tiene una estructura más profunda (data adicional)
+      if (diagramJson && diagramJson.data) {
+        console.log('hola accedio aqui')
+        diagramJson = diagramJson.data // Si tiene 'data' adicional, accede a esa propiedad interior
+      }
+      // Aquí asumimos que el servidor devuelve un JSON con una propiedad "data"
+      // Accedemos al "data" que contiene el diagrama
+      if (currentDiagramPosition.value) {
+        diagram.position = currentDiagramPosition.value
+      }
+      if (currentDiagramScale.value) {
+        diagram.scale = currentDiagramScale.value
+      }
+      // Pasar el JSON de la base de datos a GoJS
+      diagram.model = go.Model.fromJson(diagramJson)
+      diagramExists.value = true // El diagrama ya existe
+    } else {
+      console.error('No se encontró ningún diagrama guardado.')
+    }
+  } catch (error) {
+    console.error('Error al cargar el diagrama o no existe aún:', error)
+    diagramExists.value = false // No existe diagrama en la base de datos
+  }
+}
 
 // Inicializa el diagrama
 const initDiagram = () => {
@@ -98,6 +144,13 @@ const initDiagram = () => {
   diagram = $(go.Diagram, diagramDiv.value, {
     'undoManager.isEnabled': true,
     model: $(go.GraphLinksModel, { linkKeyProperty: 'key' })
+  })
+  diagram.model.addChangedListener((e) => {
+    if (e.isTransactionFinished) {
+      currentDiagramPosition.value = diagram.position
+      currentDiagramScale.value = diagram.scale
+      hasChanges.value = true // Marcar que hubo un cambio
+    }
   })
 
   // Plantilla de nodo con nombre de entidad y atributos en vertical
@@ -132,7 +185,6 @@ const initDiagram = () => {
     )
   )
 
-  // Plantilla de enlace con etiquetas y flechas según relación seleccionada
   diagram.linkTemplate = $(
     go.Link,
     { relinkableFrom: true, relinkableTo: true, selectionChanged: onLinkSelected },
@@ -140,17 +192,13 @@ const initDiagram = () => {
     $(
       go.Shape,
       new go.Binding('toArrow', 'relationship', getArrowType),
-      new go.Binding('fill', 'relationship', (rel) => (rel === 'Composicion' ? 'black' : null)), // Relleno negro solo para la composición
-      new go.Binding('stroke', 'relationship', (rel) =>
-        rel === 'Composicion' ? 'black' : 'black'
-      ), // Mantén el borde del diamante para ambas relaciones
-      { scale: 2 } // Ajusta el tamaño de las flechas y los diamantes
+      new go.Binding('fill', 'relationship', (rel) => (rel === 'Composicion' ? 'black' : null))
     ),
     $(go.TextBlock, new go.Binding('text', 'relationshipText'), {
-      segmentOffset: new go.Point(20, -10) // Posición del texto de la relación, como 1:*, etc.
+      segmentOffset: new go.Point(20, -10) // Posición del texto de la relación
     })
   )
-  // Escucha clics en las entidades para seleccionar para la relación
+
   diagram.addDiagramListener('ObjectSingleClicked', (e) => {
     const part = e.subject.part
     if (part instanceof go.Node) {
@@ -160,6 +208,64 @@ const initDiagram = () => {
       }
     }
   })
+}
+
+// Añadir nueva entidad (nodo) al diagrama
+// Añadir nueva entidad (nodo) al diagrama
+const addEntity = async () => {
+  diagram.startTransaction('Add Entity')
+  diagram.model.addNodeData({ name: 'Nueva Entidad', attributes: [], key: idCounter++ })
+  diagram.commitTransaction('Add Entity')
+
+  // Si es la primera entidad y el diagrama aún no existe, lo creamos
+  if (!diagramExists.value) {
+    const json = diagram.model.toJson()
+    const jsonoficial = JSON.parse(json)
+    jsonoficial.class = 'go.GraphLinksModel' // Corregir la clase si es necesario
+
+    // Crear el diagrama en la base de datos solo si no existe
+    try {
+      await createDiagramMutation.mutateAsync({ sessionId: sessionId, data: jsonoficial })
+      diagramExists.value = true // Marcar que el diagrama ya existe
+      alert('Diagrama creado con éxito.')
+    } catch (error) {
+      console.error('Error al crear el diagrama:', error)
+    }
+  } else {
+    updateDiagram() // Si el diagrama ya existe, simplemente lo actualizamos
+  }
+}
+// Función para actualizar el diagrama existente
+const updateDiagram = async () => {
+  // Solo actualizar si hubo cambios
+
+  const json = diagram.model.toJson()
+  const jsonoficial = JSON.parse(json)
+  jsonoficial.class = 'go.GraphLinksModel' // Asegurarse de que la clase sea correcta
+
+  // Enviar la actualización al backend
+  try {
+    await updateDiagramMutation.mutateAsync({ sessionId: sessionId, data: jsonoficial })
+    hasChanges.value = false // Reiniciar el indicador de cambios después de la actualización
+    console.log('Diagrama actualizado.')
+    currentDiagramPosition.value = diagram.position
+    currentDiagramScale.value = diagram.scale
+  } catch (error) {
+    console.error('Error al actualizar el diagrama:', error)
+  }
+}
+// Función para exportar el diagrama a JSON
+const exportDiagram = () => {
+  const json = diagram.model.toJson()
+  const jsonoficial = JSON.parse(json)
+
+  // Corregir la propiedad "class" si es necesario
+  if (jsonoficial.class === '_GraphLinksModel') {
+    jsonoficial.class = 'go.GraphLinksModel'
+  }
+
+  console.log('Exported JSON: ', jsonoficial)
+  alert('Diagrama exportado a JSON. Revisa la consola.')
 }
 
 // Función para eliminar la selección (nodo o relación)
@@ -238,7 +344,6 @@ const createRelationship = () => {
     })
 
     diagram.commitTransaction('Add Relationship')
-
     selectedEntities.value = []
   }
 }
@@ -251,19 +356,6 @@ const onNodeSelected = (node) => {
     attributes.value = node.data.attributes || []
     showModal.value = true
   }
-}
-
-// Añadir nueva entidad (nodo) al diagrama con IDs positivos
-const addEntity = () => {
-  diagram.startTransaction('Add Entity')
-  diagram.model.addNodeData({ name: 'Nueva Entidad', attributes: [], key: idCounter++ })
-  diagram.commitTransaction('Add Entity')
-}
-
-const exportDiagram = () => {
-  const json = diagram.model.toJson()
-  console.log('Exported JSON: ', json)
-  alert('Diagrama exportado a JSON. Revisa la consola.')
 }
 
 // Cerrar el modal
@@ -311,8 +403,20 @@ const onLinkSelected = (link) => {
     selectedLink.value = null // Si se deselecciona, limpiamos la variable
   }
 }
+
 // Inicializar el diagrama al montar el componente
 onMounted(() => {
-  initDiagram()
+  initDiagram() // Inicializa el diagrama en el frontend
+  loadDiagram() // Intenta cargar el diagrama desde la base de datos
+
+  // Configurar el intervalo de actualización automática
+  intervalId = setInterval(() => {
+    updateDiagram() // Llamar a la función de actualización cada 30 segundos
+  }, 30000) // 30,000 ms = 30 segundos
+})
+
+// Limpiar el intervalo cuando se desmonte el componente
+onBeforeUnmount(() => {
+  clearInterval(intervalId) // Detener el intervalo cuando el componente se desmonta
 })
 </script>

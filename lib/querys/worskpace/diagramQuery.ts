@@ -9,7 +9,8 @@ export const getDiagramBySession = async (sessionId: number, token: string) => {
       }
     })
   } catch (error) {
-    console.log(error)
+    console.error(error)
+    throw error // Lanza el error para que Vue Query lo capture
   }
 }
 
