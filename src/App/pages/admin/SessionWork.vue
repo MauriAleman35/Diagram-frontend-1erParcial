@@ -6,7 +6,6 @@
       <button @click="exportDiagram" class="btn-sidebar">Exportar a JSON</button>
       <button @click="deleteSelected" class="btn-sidebar btn-danger">Eliminar Selección</button>
       <h3 v-if="isConnected">Conectado al WebSocket</h3>
-
       <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
     </div>
 
@@ -47,15 +46,13 @@
           <option value="char">char</option>
         </select>
 
-        <!-- Botón para marcar como Primary Key -->
+        <!-- Botones para Primary y Foreign Key -->
         <button
           @click="togglePrimaryKey"
           :class="['btn-pk', newAttribute.primaryKey ? 'btn-pk-active' : '']"
         >
           {{ newAttribute.primaryKey ? 'Primary Key [PK]' : 'Marcar como Primary Key' }}
         </button>
-
-        <!-- Botón para marcar como Foreign Key -->
         <button
           @click="toggleForeignKey"
           :class="['btn-fk', newAttribute.foreignKey ? 'btn-fk-active' : '']"
@@ -65,7 +62,7 @@
 
         <button @click="addAttribute" class="btn-primary">Agregar Atributo</button>
 
-        <!-- Mostrar los atributos en el modal -->
+        <!-- Mostrar atributos -->
         <ul>
           <li v-for="(attr, index) in attributes" :key="index">
             {{ attr.name }} ({{ attr.type }})
@@ -92,7 +89,7 @@
 
         <button @click="addMethod" class="btn-primary">Agregar Método</button>
 
-        <!-- Mostrar los métodos en el modal -->
+        <!-- Mostrar métodos -->
         <ul>
           <li v-for="(method, index) in methods" :key="index">
             {{ method.visibility }} {{ method.name }}(): {{ method.type }}
@@ -148,8 +145,8 @@ const userId = Number(route.params.userId) // ID de la sesión actual (puedes ob
 // WebSocket setup
 let stompClient = null
 function connectToWebSocket() {
-  const socket = new SockJS('http://localhost:3000/api/ws-diagram') // Cambia la URL si es necesario
-  stompClient = Stomp.Stomp.over(socket) // Uso correcto de la versión moderna de Stomp
+  const socket = new SockJS('http://localhost:3000/api/ws-diagram')
+  stompClient = Stomp.Stomp.over(socket)
 
   stompClient.connect(
     {},
@@ -157,17 +154,85 @@ function connectToWebSocket() {
       console.log('Conectado al WebSocket')
       // Suscribirse al canal de la sesión actual
       stompClient.subscribe(`/topic/diagrams/${sessionId}`, (message) => {
-        const updatedDiagram = JSON.parse(message.body)
+        const updatedData = JSON.parse(message.body)
+        // Si el mensaje proviene del mismo usuario que lo envió, no hacer nada
+        if (isProcessing) {
+          console.log('Ignorando el mensaje del WebSocket ya que estamos procesando localmente.')
+          isProcessing = false // Restablecer la bandera después de ignorar
+          return
+        }
+        if (updatedData && diagram) {
+          switch (updatedData.eventType) {
+            case 'nodePosition': {
+              diagram.model.startTransaction('updateNodePosition')
+              const existingNode = diagram.model.findNodeDataForKey(updatedData.nodeData.key)
+              if (existingNode) {
+                diagram.model.setDataProperty(existingNode, 'loc', updatedData.nodeData.loc)
+              }
+              diagram.model.commitTransaction('updateNodePosition')
+              console.log('Posición del nodo actualizada:', updatedData)
+              break
+            }
+            case 'newNode': {
+              diagram.model.startTransaction('addNode')
+              console.log('hola')
+              // Verificar si el nodo ya existe antes de agregarlo
+              const existingNode = diagram.model.findNodeDataForKey(updatedData.nodeData.key)
+              if (!existingNode) {
+                diagram.model.addNodeData(updatedData.nodeData)
+              } else {
+                console.warn('El nodo ya existe en el diagrama:', updatedData.nodeData.key)
+              }
 
-        if (updatedDiagram && diagram) {
-          diagram.model.startTransaction('updateDiagram')
+              diagram.model.commitTransaction('addNode')
+              console.log('Nueva entidad agregada:', updatedData)
+              break
+            }
 
-          // Actualizar solo las partes necesarias (nodos o enlaces) en lugar de reemplazar todo el modelo
-          diagram.model.mergeNodeDataArray(updatedDiagram.nodeDataArray)
-          diagram.model.mergeLinkDataArray(updatedDiagram.linkDataArray)
+            case 'newLink': {
+              diagram.model.startTransaction('addLink')
+              diagram.model.addLinkData(updatedData.linkData)
+              diagram.model.commitTransaction('addLink')
+              console.log('Nueva relación agregada:', updatedData)
+              break
+            }
+            case 'updateNode': {
+              const existingNode = diagram.model.findNodeDataForKey(updatedData.nodeData.key)
+              if (existingNode) {
+                diagram.model.startTransaction('updateNode')
+                diagram.model.setDataProperty(existingNode, 'name', updatedData.nodeData.name)
+                diagram.model.setDataProperty(
+                  existingNode,
+                  'attributes',
+                  updatedData.nodeData.attributes
+                )
+                diagram.model.setDataProperty(existingNode, 'methods', updatedData.nodeData.methods)
+                diagram.model.setDataProperty(existingNode, 'loc', updatedData.nodeData.loc)
+                diagram.model.commitTransaction('updateNode')
 
-          diagram.model.commitTransaction('updateDiagram')
-          console.log('Diagrama actualizado desde WebSocket:', updatedDiagram)
+                console.log('Entidad actualizada desde WebSocket:', updatedData)
+              } else {
+                console.warn('No se encontró el nodo para actualizar:', updatedData.nodeData.key)
+              }
+              break
+            }
+            case 'deleteNode': {
+              console.log('Procesando eliminación de nodo:', updatedData.linkData)
+              const existingNode = diagram.model.findNodeDataForKey(updatedData.linkData.key)
+              if (existingNode) {
+                diagram.model.startTransaction('deleteNode')
+                diagram.model.removeNodeData(existingNode) // Eliminar el nodo del modelo
+                diagram.model.commitTransaction('deleteNode')
+                console.log('Nodo eliminado en GoJS:', existingNode)
+              } else {
+                console.warn('No se encontró el nodo para eliminar:', updatedData.nodeData.key)
+              }
+              break
+            }
+            default:
+              console.error('Tipo de evento desconocido:', updatedData.eventType)
+              break
+          }
         }
       })
     },
@@ -176,11 +241,17 @@ function connectToWebSocket() {
     }
   )
 }
-function sendDiagramUpdate(updatedDiagramJson) {
+
+const sendDiagramUpdate = (eventType, data) => {
   if (stompClient && stompClient.connected) {
-    stompClient.send(`/app/updateDiagram/${sessionId}`, {}, JSON.stringify(updatedDiagramJson))
+    const updatePayload = {
+      eventType, // Puede ser "nodePosition", "newNode" o "newLink"
+      ...data
+    }
+    stompClient.send(`/app/updateDiagram/${sessionId}`, {}, JSON.stringify(updatePayload))
   }
 }
+
 // Función para manejar las actualizaciones de diagrama desde el WebSocket
 function onDiagramUpdate(updatedDiagram) {
   if (updatedDiagram) {
@@ -239,13 +310,24 @@ const initDiagram = () => {
       console.log('holaaaa')
     }
   })
+  diagram.addDiagramListener('SelectionMoved', (e) => {
+    e.subject.each((part) => {
+      if (part instanceof go.Node) {
+        const updatedNode = {
+          key: part.data.key,
+          loc: `${part.location.x} ${part.location.y}`
+        }
+        sendDiagramUpdate('nodePosition', { nodeData: updatedNode })
+      }
+    })
+  })
 
   // Configurar la plantilla del nodo y sus atributos
   diagram.nodeTemplate = $(
     go.Node,
     'Auto',
     {
-      selectionChanged: onNodeSelected, // Evento al seleccionar un nodo
+      selectionChanged: onNodeSelected,
       locationSpot: go.Spot.Center
     },
     new go.Binding('location', 'loc', go.Point.parse).makeTwoWay(go.Point.stringify),
@@ -253,13 +335,11 @@ const initDiagram = () => {
     $(
       go.Panel,
       'Vertical',
-      // Texto con el nombre de la entidad
       $(
         go.TextBlock,
         { margin: 8, font: 'bold 14px sans-serif', stroke: '#333' },
         new go.Binding('text', 'name')
       ),
-      // Panel para los atributos de la entidad
       $(go.Panel, 'Vertical', new go.Binding('itemArray', 'attributes'), {
         itemTemplate: $(
           go.Panel,
@@ -267,16 +347,10 @@ const initDiagram = () => {
           $(
             go.TextBlock,
             { margin: 4, font: '12px sans-serif', stroke: '#333' },
-            new go.Binding('text', '', (attr) => {
-              let displayText = `${attr.name} (${attr.type})`
-              if (attr.primaryKey) displayText += ' [PK]'
-              if (attr.foreignKey) displayText += ' [FK]'
-              return displayText
-            })
+            new go.Binding('text', '', (attr) => `${attr.name} (${attr.type})`)
           )
         )
       }),
-      // Panel para los métodos de la entidad
       $(go.Panel, 'Vertical', new go.Binding('itemArray', 'methods'), {
         itemTemplate: $(
           go.Panel,
@@ -284,10 +358,11 @@ const initDiagram = () => {
           $(
             go.TextBlock,
             { margin: 4, font: '12px sans-serif', stroke: '#333' },
-            new go.Binding('text', '', (method) => {
-              let methodText = `${method.visibility} ${method.name}(): ${method.type}`
-              return methodText
-            })
+            new go.Binding(
+              'text',
+              '',
+              (method) => `${method.visibility} ${method.name}(): ${method.type}`
+            )
           )
         )
       })
@@ -360,11 +435,16 @@ const initDiagram = () => {
     }
   })
 }
+
 // Añadir nueva entidad (nodo) al diagrama
 const addEntity = async () => {
   diagram.startTransaction('Add Entity')
-  diagram.model.addNodeData({ name: 'Nueva Entidad', attributes: [], key: idCounter++ })
+  const newNode = { name: 'Nueva Entidad', attributes: [], key: idCounter++ }
+  diagram.model.addNodeData(newNode)
   diagram.commitTransaction('Add Entity')
+
+  // Enviar la nueva entidad vía WebSocket como un evento de "newNode"
+  sendDiagramUpdate('newNode', { nodeData: newNode })
 
   if (!diagramExists.value) {
     const json = diagram.model.toJson()
@@ -379,7 +459,7 @@ const addEntity = async () => {
       console.error('Error al crear el diagrama:', error)
     }
   } else {
-    updateDiagram() // Actualizar el diagrama
+    updateDiagram() // Actualizar el diagrama completo si ya existe
   }
 }
 
@@ -418,17 +498,35 @@ const saveEntity = () => {
     return
   }
 
+  // Establecer la bandera de procesamiento a true para evitar duplicaciones
+  isProcessing = true
+
+  // Iniciar una transacción para actualizar la entidad
   diagram.startTransaction('Update Entity')
+
+  // Actualizar el nombre, atributos y métodos de la entidad seleccionada
   diagram.model.setDataProperty(selectedNode.data, 'name', entityName.value)
   diagram.model.setDataProperty(selectedNode.data, 'attributes', [...attributes.value])
+  diagram.model.setDataProperty(selectedNode.data, 'methods', [...methods.value])
+
   diagram.commitTransaction('Update Entity')
 
-  // Enviar la actualización del diagrama a través del WebSocket
-  const diagramJson = diagram.model.toJson()
-  sendDiagramUpdate(JSON.parse(diagramJson))
+  // Enviar los cambios de la entidad vía WebSocket
+  const updatedEntity = {
+    key: selectedNode.data.key,
+    name: entityName.value,
+    attributes: [...attributes.value],
+    methods: [...methods.value],
+    loc: selectedNode.data.loc // Incluir la posición actual
+  }
 
-  closeModal()
+  sendDiagramUpdate('updateNode', { nodeData: updatedEntity })
+
+  console.log('Entidad actualizada y enviada vía WebSocket:', updatedEntity)
+
+  closeModal() // Cerrar el modal después de guardar la entidad
 }
+
 const addMethod = () => {
   if (newMethod.value.name && newMethod.value.type && newMethod.value.visibility) {
     methods.value.push({ ...newMethod.value })
@@ -482,13 +580,22 @@ const updateNodeAttributes = () => {
 const deleteSelected = () => {
   if (selectedLink.value) {
     diagram.commandHandler.deleteSelection()
+    diagram.commitTransaction('Delete Node')
+
+    diagram.commandHandler.deleteSelection()
     selectedLink.value = null // Limpiar la selección
   } else if (selectedEntity.value) {
-    diagram.select(selectedEntity.value)
-    diagram.commandHandler.deleteSelection()
-    selectedEntity.value = null
-    attributes.value = []
-    showModal.value = false
+    // Primero, obtener el nodo que se va a eliminar
+    const nodeToDelete = selectedEntity.value.data
+
+    // Eliminar el nodo del diagrama
+    diagram.startTransaction('Delete Node')
+
+    // Enviar el evento de eliminación de nodo a través del WebSocket
+    sendDiagramUpdate('deleteNode', { nodeData: nodeToDelete })
+
+    console.log('Nodo eliminado y enviado vía WebSocket:', nodeToDelete)
+    selectedEntity.value = null // Limpiar la selección
   }
 }
 
@@ -531,12 +638,30 @@ const selectRelationship = (type) => {
   alert(`Has seleccionado: ${type}. Ahora selecciona dos entidades para relacionarlas.`)
 }
 
-const createRelationship = () => {
-  if (selectedEntities.value.length === 2) {
-    diagram.startTransaction('Add Relationship')
+let isProcessing = false // Nueva bandera global para evitar procesamiento duplicado
 
+const createRelationship = () => {
+  if (isProcessing) {
+    return // Si ya estamos procesando una relación, no hacemos nada
+  }
+
+  if (selectedEntities.value.length === 2) {
     const fromNode = selectedEntities.value[0].data
     const toNode = selectedEntities.value[1].data
+
+    // Verificar si la relación ya existe antes de agregarla
+    const existingLink = diagram.model.linkDataArray.find(
+      (link) =>
+        (link.from === fromNode.key && link.to === toNode.key) ||
+        (link.from === toNode.key && link.to === fromNode.key)
+    )
+
+    if (existingLink) {
+      console.warn('Relación ya existe entre los nodos seleccionados.')
+      return // Evitar la duplicación de la relación
+    }
+
+    diagram.startTransaction('Add Relationship')
 
     let relationshipText = ''
 
@@ -550,27 +675,29 @@ const createRelationship = () => {
       case 'ManyToMany':
         relationshipText = '*:*'
         break
-      case 'Generalizacion':
-      case 'Agregacion':
-      case 'Composicion':
-      case 'Recursividad':
+      default:
         relationshipText = ''
         break
     }
 
-    diagram.model.addLinkData({
+    const newLink = {
       from: fromNode.key,
       to: toNode.key,
       relationship: selectedRelationship.value,
       relationshipText: relationshipText,
-      key: linkCounter++ // Asigna un key positivo único
-    })
+      key: linkCounter++
+    }
 
+    diagram.model.addLinkData(newLink) // Añadir la nueva relación al diagrama
     diagram.commitTransaction('Add Relationship')
 
-    const updatedDiagram = diagram.model.toJson() // Convertir el diagrama actualizado a JSON
-    sendDiagramUpdate(JSON.parse(updatedDiagram))
-    console.log('Enlace creado y enviado:', updatedDiagram)
+    // Establecer la bandera de procesamiento a true
+    isProcessing = true
+
+    // Enviar solo los datos de la nueva relación vía WebSocket
+    sendDiagramUpdate('newLink', { linkData: newLink })
+
+    console.log('Relación creada y enviada:', newLink)
   }
 }
 
@@ -582,6 +709,7 @@ const onNodeSelected = (node) => {
     selectedEntity.value = node
     entityName.value = node.data.name
     attributes.value = node.data.attributes || []
+    methods.value = node.data.methods || []
     showModal.value = true // Mostrar el modal para editar la entidad
   } else {
     selectedNode = null

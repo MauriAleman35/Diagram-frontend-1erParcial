@@ -162,6 +162,7 @@
 .btn-delete:hover {
   background-color: #c0392b;
 }
+
 .btn-fk {
   background-color: #ddd;
   color: black;
@@ -176,4 +177,49 @@
 .btn-fk-active {
   background-color: #3498db;
   color: white;
+}
+
+/* Agregar transiciones y estilos adicionales */
+button {
+  transition:
+    background-color 0.3s ease,
+    transform 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+  .sidebar,
+  .relations-panel {
+    width: 100%;
+    box-shadow: none;
+  }
+
+  .modal {
+    width: 90%;
+    max-height: 90vh;
+  }
+}
+
+ul {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+ul li {
+  background: #e9ecef;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message {
+  color: #e74c3c;
+  font-size: 0.9em;
+  margin-top: 5px;
 }
