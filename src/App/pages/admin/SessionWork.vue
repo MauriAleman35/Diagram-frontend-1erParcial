@@ -46,6 +46,7 @@
           <option value="boolean">boolean</option>
           <option value="char">char</option>
         </select>
+
         <!-- Botón para marcar como Primary Key -->
         <button
           @click="togglePrimaryKey"
@@ -73,6 +74,32 @@
             <button @click="removeAttribute(index)" class="btn-secondary">Eliminar</button>
           </li>
         </ul>
+
+        <!-- Métodos -->
+        <h4>Métodos</h4>
+        <input v-model="newMethod.name" placeholder="Nombre del Método" class="input-text" />
+        <select v-model="newMethod.type" class="input-select">
+          <option value="void">void</option>
+          <option value="boolean">boolean</option>
+          <option value="int">int</option>
+          <option value="String">String</option>
+        </select>
+        <select v-model="newMethod.visibility" class="input-select">
+          <option value="public">public</option>
+          <option value="private">private</option>
+          <option value="protected">protected</option>
+        </select>
+
+        <button @click="addMethod" class="btn-primary">Agregar Método</button>
+
+        <!-- Mostrar los métodos en el modal -->
+        <ul>
+          <li v-for="(method, index) in methods" :key="index">
+            {{ method.visibility }} {{ method.name }}(): {{ method.type }}
+            <button @click="removeMethod(index)" class="btn-secondary">Eliminar</button>
+          </li>
+        </ul>
+
         <button @click="saveEntity" class="btn-primary">Guardar</button>
         <button @click="closeModal" class="btn-secondary">Cerrar</button>
       </div>
@@ -100,6 +127,8 @@ let intervalId = null
 const diagramDiv = ref(null)
 let diagram = null
 let diagramData = ref(null)
+const newMethod = ref({ name: '', type: 'void', visibility: 'public' })
+const methods = ref([])
 let selectedNode = null
 let selectedLink = ref(null)
 const showModal = ref(false)
@@ -224,11 +253,13 @@ const initDiagram = () => {
     $(
       go.Panel,
       'Vertical',
+      // Texto con el nombre de la entidad
       $(
         go.TextBlock,
         { margin: 8, font: 'bold 14px sans-serif', stroke: '#333' },
         new go.Binding('text', 'name')
       ),
+      // Panel para los atributos de la entidad
       $(go.Panel, 'Vertical', new go.Binding('itemArray', 'attributes'), {
         itemTemplate: $(
           go.Panel,
@@ -244,23 +275,77 @@ const initDiagram = () => {
             })
           )
         )
+      }),
+      // Panel para los métodos de la entidad
+      $(go.Panel, 'Vertical', new go.Binding('itemArray', 'methods'), {
+        itemTemplate: $(
+          go.Panel,
+          'Horizontal',
+          $(
+            go.TextBlock,
+            { margin: 4, font: '12px sans-serif', stroke: '#333' },
+            new go.Binding('text', '', (method) => {
+              let methodText = `${method.visibility} ${method.name}(): ${method.type}`
+              return methodText
+            })
+          )
+        )
       })
-    )
+    ),
+    makePort('T', go.Spot.Top, true),
+    makePort('L', go.Spot.Left, true),
+    makePort('R', go.Spot.Right, true),
+    makePort('B', go.Spot.Bottom, true)
   )
 
-  // Configurar la plantilla de enlace para las relaciones
+  function makePort(name, spot, output) {
+    return $(go.Shape, 'Circle', {
+      fill: 'transparent',
+      stroke: null,
+      desiredSize: new go.Size(8, 8),
+      portId: name,
+      fromSpot: spot,
+      toSpot: spot,
+      fromLinkable: output, // Esto debería ser true o false
+      toLinkable: !output, // Esto debería ser true o false
+      cursor: 'pointer'
+    })
+  }
   diagram.linkTemplate = $(
     go.Link,
     {
+      routing: go.Link.AvoidsNodes,
+      curve: go.Link.JumpOver,
+      corner: 5,
       relinkableFrom: true,
       relinkableTo: true,
       selectionChanged: onLinkSelected
     },
-    $(go.Shape, new go.Binding('strokeDashArray', 'relationship', getDashArray)),
-    $(go.Shape, new go.Binding('toArrow', 'relationship', getArrowType)),
-    $(go.TextBlock, new go.Binding('text', 'relationshipText'), {
-      segmentOffset: new go.Point(20, -10)
-    })
+    // Forma de la línea
+    $(
+      go.Shape,
+      { isPanelMain: true, strokeWidth: 2 },
+      new go.Binding('strokeDashArray', 'relationship', getDashArray)
+    ),
+    // Flecha en el extremo "to"
+    $(
+      go.Shape,
+      new go.Binding('toArrow', 'relationship', getArrowType),
+      { stroke: 'black', fill: 'black' } // Configuración de estilo para las flechas
+    ),
+    // Diamante en el extremo "from" (vacío o sólido para agregación/composición)
+    $(
+      go.Shape,
+      new go.Binding('fromArrow', 'relationship', getFromArrow),
+      new go.Binding('fill', 'relationship', getFromArrowFill), // Controla si el diamante está lleno o vacío
+      { stroke: 'black' } // El borde del diamante será siempre negro
+    ),
+    // Texto sobre la línea
+    $(
+      go.TextBlock,
+      { segmentOffset: new go.Point(0, -10), editable: true },
+      new go.Binding('text', 'relationshipText').makeTwoWay()
+    )
   )
 
   // Listener para manejar las relaciones
@@ -298,6 +383,17 @@ const addEntity = async () => {
   }
 }
 
+function getFromArrow(relationship) {
+  switch (relationship) {
+    case 'Agregacion':
+      return 'Diamond' // Diamante vacío para agregación
+    case 'Composicion':
+      return 'Diamond' // Diamante sólido para composición
+    default:
+      return '' // Sin símbolo para otras relaciones
+  }
+}
+
 // Función para actualizar el diagrama existente
 const updateDiagram = async () => {
   const json = diagram.model.toJson()
@@ -332,6 +428,17 @@ const saveEntity = () => {
   sendDiagramUpdate(JSON.parse(diagramJson))
 
   closeModal()
+}
+const addMethod = () => {
+  if (newMethod.value.name && newMethod.value.type && newMethod.value.visibility) {
+    methods.value.push({ ...newMethod.value })
+    newMethod.value = { name: '', type: 'void', visibility: 'public' } // Reiniciar los valores
+  }
+}
+
+// Eliminar método
+const removeMethod = (index) => {
+  methods.value.splice(index, 1)
 }
 // Cerrar el modal
 const closeModal = () => {
@@ -386,26 +493,36 @@ const deleteSelected = () => {
 }
 
 // Funciones relacionadas con las relaciones
-const getArrowType = (relationship) => {
+function getArrowType(relationship) {
   switch (relationship) {
     case 'Generalizacion':
-      return 'OpenTriangle'
+      return 'OpenTriangle' // Triángulo vacío para generalización
+    case 'OneToOne':
+    case 'OneToMany':
+    case 'ManyToMany':
+      return '' // Sin flecha para asociaciones
     case 'Agregacion':
-      return 'Diamond'
     case 'Composicion':
-      return 'Diamond'
-    case 'Recursividad':
-      return ''
+      return '' // Sin flecha para agregación/composición, solo diamante en "from"
     default:
-      return ''
+      return '' // Sin flecha para otros casos
   }
 }
-
-const getDashArray = (relationship) => {
-  if (relationship === 'Recursividad') {
-    return [4, 2]
+function getFromArrowFill(relationship) {
+  switch (relationship) {
+    case 'Composicion':
+      return 'black' // Diamante sólido para composición
+    case 'Agregacion':
+      return 'white' // Diamante vacío para agregación
+    default:
+      return null // No aplica para otros casos
   }
-  return null
+}
+function getDashArray(relationship) {
+  if (relationship === 'Dependencia') {
+    return [4, 2] // Línea punteada para dependencia
+  }
+  return null // Línea sólida por defecto
 }
 
 const selectRelationship = (type) => {
@@ -509,4 +626,6 @@ onBeforeUnmount(() => {
 onBeforeUnmount(() => {
   clearInterval(intervalId)
 })
+
+//exclusion pesimista
 </script>
