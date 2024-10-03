@@ -5,6 +5,8 @@
       <button @click="addEntity" class="btn-sidebar">Añadir Entidad</button>
       <button @click="exportDiagram" class="btn-sidebar">Exportar a JSON</button>
       <button @click="deleteSelected" class="btn-sidebar btn-danger">Eliminar Selección</button>
+      <h3 v-if="isConnected">Conectado al WebSocket</h3>
+
       <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
     </div>
 
@@ -81,9 +83,13 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import go from 'gojs'
-import { useDiagrams } from '../../../../hooks/use-diagram' // Asegúrate de importar las funciones de Vue Query para Diagram
+import { useDiagrams } from '../../../../hooks/use-diagram'
+
 import { useRoute } from 'vue-router'
 import '../../utils/sessionWork.css'
+import { watchEffect } from 'vue'
+import SockJS from 'sockjs-client'
+import * as Stomp from '@stomp/stompjs'
 
 // Variables y estados
 const selectedEntity = ref(null)
@@ -93,6 +99,7 @@ let hasChanges = ref(false) // Variable para detectar si ha habido cambios en el
 let intervalId = null
 const diagramDiv = ref(null)
 let diagram = null
+let diagramData = ref(null)
 let selectedNode = null
 let selectedLink = ref(null)
 const showModal = ref(false)
@@ -106,8 +113,52 @@ let selectedEntities = ref([]) // Para almacenar las entidades seleccionadas
 let idCounter = 1 // Contador para generar IDs positivos
 let linkCounter = 1 // Contador para generar keys positivos para los enlaces
 const diagramExists = ref(false) // Saber si el diagrama ya existe en la base de datos
-const sessionId = Number(route.params.sessionId) // ID de la sesión actual (puedes obtenerlo dinámicamente)
+const sessionId = Number(route.params.sessionId)
+const userId = Number(route.params.userId) // ID de la sesión actual (puedes obtenerlo dinámicamente)
+// Pasamos la función para manejar actualizaciones de diagrama
+// WebSocket setup
+let stompClient = null
+function connectToWebSocket() {
+  const socket = new SockJS('http://localhost:3000/api/ws-diagram') // Cambia la URL si es necesario
+  stompClient = Stomp.Stomp.over(socket) // Uso correcto de la versión moderna de Stomp
 
+  stompClient.connect(
+    {},
+    () => {
+      console.log('Conectado al WebSocket')
+      // Suscribirse al canal de la sesión actual
+      stompClient.subscribe(`/topic/diagrams/${sessionId}`, (message) => {
+        const updatedDiagram = JSON.parse(message.body)
+
+        if (updatedDiagram && diagram) {
+          diagram.model.startTransaction('updateDiagram')
+
+          // Actualizar solo las partes necesarias (nodos o enlaces) en lugar de reemplazar todo el modelo
+          diagram.model.mergeNodeDataArray(updatedDiagram.nodeDataArray)
+          diagram.model.mergeLinkDataArray(updatedDiagram.linkDataArray)
+
+          diagram.model.commitTransaction('updateDiagram')
+          console.log('Diagrama actualizado desde WebSocket:', updatedDiagram)
+        }
+      })
+    },
+    (error) => {
+      console.error('Error al conectar al WebSocket:', error)
+    }
+  )
+}
+function sendDiagramUpdate(updatedDiagramJson) {
+  if (stompClient && stompClient.connected) {
+    stompClient.send(`/app/updateDiagram/${sessionId}`, {}, JSON.stringify(updatedDiagramJson))
+  }
+}
+// Función para manejar las actualizaciones de diagrama desde el WebSocket
+function onDiagramUpdate(updatedDiagram) {
+  if (updatedDiagram) {
+    diagram.model = go.Model.fromJson(updatedDiagram)
+    console.log('Diagrama actualizado desde WebSocket:', updatedDiagram)
+  }
+}
 // Hook para consumir los datos del diagrama
 const { getDiagramBySessionQuery, createDiagramMutation, updateDiagramMutation } =
   useDiagrams(token)
@@ -138,7 +189,6 @@ const loadDiagram = async () => {
   }
 }
 
-// Inicializa el diagrama
 const initDiagram = () => {
   const $ = go.GraphObject.make
 
@@ -146,51 +196,50 @@ const initDiagram = () => {
     'undoManager.isEnabled': true,
     model: $(go.GraphLinksModel, { linkKeyProperty: 'key' })
   })
+
+  // Listener para detectar cambios en el diagrama y enviar las actualizaciones
   diagram.model.addChangedListener((e) => {
     if (e.isTransactionFinished) {
       currentDiagramPosition.value = diagram.position
       currentDiagramScale.value = diagram.scale
-      hasChanges.value = true // Marcar que hubo un cambio
+      hasChanges.value = true
+
+      // Enviar la actualización del diagrama en tiempo real a través del WebSocket
+      const updatedDiagram = diagram.model.toJson()
+      sendDiagramUpdate(JSON.parse(updatedDiagram))
+      console.log('holaaaa')
     }
   })
 
-  // Plantilla de nodo con nombre de entidad y atributos en vertical
+  // Configurar la plantilla del nodo y sus atributos
   diagram.nodeTemplate = $(
     go.Node,
     'Auto',
-    { selectionChanged: onNodeSelected, locationSpot: go.Spot.Center },
+    {
+      selectionChanged: onNodeSelected, // Evento al seleccionar un nodo
+      locationSpot: go.Spot.Center
+    },
     new go.Binding('location', 'loc', go.Point.parse).makeTwoWay(go.Point.stringify),
     $(go.Shape, 'RoundedRectangle', { fill: 'lightblue', stroke: null }),
-
-    // Panel vertical que contiene el nombre y los atributos del nodo
     $(
       go.Panel,
       'Vertical',
-      // Bloque de texto para el nombre del nodo
       $(
         go.TextBlock,
         { margin: 8, font: 'bold 14px sans-serif', stroke: '#333' },
         new go.Binding('text', 'name')
       ),
-
-      // Panel vertical que contiene los atributos
       $(go.Panel, 'Vertical', new go.Binding('itemArray', 'attributes'), {
-        // Plantilla para cada atributo
         itemTemplate: $(
           go.Panel,
           'Horizontal',
           $(
             go.TextBlock,
             { margin: 4, font: '12px sans-serif', stroke: '#333' },
-            // Binding para mostrar los atributos y sus claves primarias/foráneas
             new go.Binding('text', '', (attr) => {
               let displayText = `${attr.name} (${attr.type})`
-              if (attr.primaryKey) {
-                displayText += ' [PK]'
-              }
-              if (attr.foreignKey) {
-                displayText += ' [FK]'
-              }
+              if (attr.primaryKey) displayText += ' [PK]'
+              if (attr.foreignKey) displayText += ' [FK]'
               return displayText
             })
           )
@@ -199,9 +248,14 @@ const initDiagram = () => {
     )
   )
 
+  // Configurar la plantilla de enlace para las relaciones
   diagram.linkTemplate = $(
     go.Link,
-    { relinkableFrom: true, relinkableTo: true, selectionChanged: onLinkSelected },
+    {
+      relinkableFrom: true,
+      relinkableTo: true,
+      selectionChanged: onLinkSelected
+    },
     $(go.Shape, new go.Binding('strokeDashArray', 'relationship', getDashArray)),
     $(go.Shape, new go.Binding('toArrow', 'relationship', getArrowType)),
     $(go.TextBlock, new go.Binding('text', 'relationshipText'), {
@@ -209,17 +263,18 @@ const initDiagram = () => {
     })
   )
 
+  // Listener para manejar las relaciones
   diagram.addDiagramListener('ObjectSingleClicked', (e) => {
     const part = e.subject.part
     if (part instanceof go.Node) {
       selectedEntities.value.push(part)
       if (selectedEntities.value.length === 2) {
-        createRelationship()
+        createRelationship() // Llamar a la función para crear la relación cuando hay dos nodos seleccionados
+        selectedEntities.value = [] // Limpiar la selección después de crear la relación
       }
     }
   })
 }
-
 // Añadir nueva entidad (nodo) al diagrama
 const addEntity = async () => {
   diagram.startTransaction('Add Entity')
@@ -267,20 +322,16 @@ const saveEntity = () => {
     return
   }
 
-  // Comenzar la transacción para actualizar la entidad
   diagram.startTransaction('Update Entity')
-
-  // Actualizar el nombre de la entidad y sus atributos
   diagram.model.setDataProperty(selectedNode.data, 'name', entityName.value)
   diagram.model.setDataProperty(selectedNode.data, 'attributes', [...attributes.value])
-
-  // Finalizar la transacción
   diagram.commitTransaction('Update Entity')
 
-  // Cerrar el modal
-  closeModal()
+  // Enviar la actualización del diagrama a través del WebSocket
+  const diagramJson = diagram.model.toJson()
+  sendDiagramUpdate(JSON.parse(diagramJson))
 
-  console.log('Entidad actualizada y modal cerrado.')
+  closeModal()
 }
 // Cerrar el modal
 const closeModal = () => {
@@ -399,24 +450,26 @@ const createRelationship = () => {
     })
 
     diagram.commitTransaction('Add Relationship')
-    selectedEntities.value = []
+
+    const updatedDiagram = diagram.model.toJson() // Convertir el diagrama actualizado a JSON
+    sendDiagramUpdate(JSON.parse(updatedDiagram))
+    console.log('Enlace creado y enviado:', updatedDiagram)
   }
 }
 
 // Cuando se selecciona un nodo, abrir el modal de edición
+// Cuando se selecciona un nodo, abrir el modal de edición
 const onNodeSelected = (node) => {
   if (node.isSelected) {
-    selectedNode = node // Asegúrate de que selectedNode esté correctamente asignado
+    selectedNode = node
     selectedEntity.value = node
     entityName.value = node.data.name
     attributes.value = node.data.attributes || []
-    showModal.value = true // Muestra el modal de edición si es necesario
-    console.log('Nodo seleccionado:', node.data)
+    showModal.value = true // Mostrar el modal para editar la entidad
   } else {
-    selectedNode = null // Limpia selectedNode si no hay ningún nodo seleccionado
+    selectedNode = null
     selectedEntity.value = null
-    showModal.value = false
-    console.log('Nodo deseleccionado')
+    showModal.value = false // Cerrar el modal
   }
 }
 
@@ -433,11 +486,23 @@ const onLinkSelected = (link) => {
 onMounted(() => {
   initDiagram() // Inicializa el diagrama en el frontend
   loadDiagram() // Cargar el diagrama desde la base de datos
+  connectToWebSocket() // Conectar al WebSocket
 
-  // Configurar el intervalo de actualización automática
-  intervalId = setInterval(() => {
-    updateDiagram() // Llamar a la función de actualización cada 30 segundos
-  }, 30000) // 30,000 ms = 30 segundos
+  watchEffect(() => {
+    if (diagramData.value) {
+      // Si hay actualizaciones del diagrama, cargarlas en el modelo de GoJS
+      diagram.model = go.Model.fromJson(diagramData.value)
+    }
+  })
+})
+
+// Limpiar la conexión al desmontar el componente
+onBeforeUnmount(() => {
+  if (stompClient && stompClient.connected) {
+    stompClient.disconnect(() => {
+      console.log('Desconectado del WebSocket')
+    })
+  }
 })
 
 // Limpiar el intervalo cuando se desmonte el componente
