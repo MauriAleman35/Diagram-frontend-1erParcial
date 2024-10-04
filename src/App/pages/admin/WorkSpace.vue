@@ -2,7 +2,7 @@
 import MenuWork from '@/components/MenuWork.vue'
 import DialogCreateSession from '@/components/DialogCreateSession.vue'
 import NavigationWork from '@/components/NavigationWork.vue'
-import { Icons } from '@/components/Icons.vue'
+import { Icons } from '../../../components/Icons.vue'
 import { ref, computed, watchEffect } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useUsers } from '../../../../hooks/use-users'
