@@ -13,11 +13,11 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
-    "@joint/plus": "file:C:/Users/Mauri35/Downloads/jointplus/build/package/joint-plus.tgz",
     "@mdi/font": "^7.4.47",
     "@stomp/stompjs": "^7.0.0",
     "@tanstack/vue-query": "^5.56.2",
     "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
     "gojs": "^3.0.11",
     "jwt-decode": "^4.0.0",
     "lucide-vue": "^0.445.0",

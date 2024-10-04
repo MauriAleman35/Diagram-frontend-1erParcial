@@ -7,6 +7,13 @@
       <button @click="deleteSelected" class="btn-sidebar btn-danger">Eliminar Selección</button>
       <h3 v-if="isConnected">Conectado al WebSocket</h3>
       <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
+      <!-- Botón para editar entidad si se ha seleccionado alguna -->
+      <button v-if="selectedEntity" @click="openEditDialog" class="btn-sidebar">
+        Editar Entidad
+      </button>
+
+      <button @click="exportDiagramAsBackend" class="btn-sidebar">Exportar Backend</button>
+      <button @click="goBack" class="btn-sidebar">Volver Atrás</button>
     </div>
 
     <!-- Área del diagrama en el centro -->
@@ -108,13 +115,13 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import go from 'gojs'
 import { useDiagrams } from '../../../../hooks/use-diagram'
-
+import { exportDiagram } from '../../../../lib/querys/worskpace/diagramQuery'
 import { useRoute } from 'vue-router'
 import '../../utils/sessionWork.css'
 import { watchEffect } from 'vue'
 import SockJS from 'sockjs-client'
 import * as Stomp from '@stomp/stompjs'
-
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api'
 // Variables y estados
 const selectedEntity = ref(null)
 let currentDiagramPosition = ref(null) // Variable para guardar la posición
@@ -145,7 +152,7 @@ const userId = Number(route.params.userId) // ID de la sesión actual (puedes ob
 // WebSocket setup
 let stompClient = null
 function connectToWebSocket() {
-  const socket = new SockJS('http://localhost:3000/api/ws-diagram')
+  const socket = new SockJS(baseURL)
   stompClient = Stomp.Stomp.over(socket)
 
   stompClient.connect(
@@ -241,7 +248,14 @@ function connectToWebSocket() {
     }
   )
 }
-
+const exportDiagramAsBackend = async () => {
+  try {
+    await exportDiagram(sessionId, token)
+    console.log('Archivo ZIP exportado y descargado con éxito.')
+  } catch (error) {
+    console.error('Error al exportar el backend como ZIP:', error)
+  }
+}
 const sendDiagramUpdate = (eventType, data) => {
   if (stompClient && stompClient.connected) {
     const updatePayload = {
@@ -251,7 +265,14 @@ const sendDiagramUpdate = (eventType, data) => {
     stompClient.send(`/app/updateDiagram/${sessionId}`, {}, JSON.stringify(updatePayload))
   }
 }
-
+const openEditDialog = () => {
+  if (selectedEntity.value) {
+    entityName.value = selectedEntity.value.data.name
+    attributes.value = selectedEntity.value.data.attributes || []
+    methods.value = selectedEntity.value.data.methods || []
+    showModal.value = true // Mostrar el modal
+  }
+}
 // Función para manejar las actualizaciones de diagrama desde el WebSocket
 function onDiagramUpdate(updatedDiagram) {
   if (updatedDiagram) {
@@ -288,7 +309,10 @@ const loadDiagram = async () => {
     diagramExists.value = false // No existe diagrama en la base de datos
   }
 }
-
+function goBack() {
+  // Usa el historial del navegador para ir atrás
+  window.history.back()
+}
 const initDiagram = () => {
   const $ = go.GraphObject.make
 
@@ -347,7 +371,11 @@ const initDiagram = () => {
           $(
             go.TextBlock,
             { margin: 4, font: '12px sans-serif', stroke: '#333' },
-            new go.Binding('text', '', (attr) => `${attr.name} (${attr.type})`)
+            new go.Binding('text', '', (attr) => {
+              let pkText = attr.primaryKey ? ' [PK]' : ''
+              let fkText = attr.foreignKey ? ' [FK]' : ''
+              return `${attr.name} (${attr.type})${pkText}${fkText}`
+            })
           )
         )
       }),
@@ -674,6 +702,20 @@ const createRelationship = () => {
         break
       case 'ManyToMany':
         relationshipText = '*:*'
+        // Crear la clase intermedia
+        {
+          const intermediateNode = {
+            key: idCounter++, // Incrementar el contador
+            name: 'Tienda_Moiso',
+            attributes: [
+              { name: 'tiendaId', type: 'int', foreignKey: true },
+              { name: 'moisoId', type: 'int', foreignKey: true }
+            ],
+            methods: []
+          }
+
+          diagram.model.addNodeData(intermediateNode) // Añadir el nodo intermedio
+        }
         break
       default:
         relationshipText = ''
@@ -707,14 +749,9 @@ const onNodeSelected = (node) => {
   if (node.isSelected) {
     selectedNode = node
     selectedEntity.value = node
-    entityName.value = node.data.name
-    attributes.value = node.data.attributes || []
-    methods.value = node.data.methods || []
-    showModal.value = true // Mostrar el modal para editar la entidad
   } else {
     selectedNode = null
     selectedEntity.value = null
-    showModal.value = false // Cerrar el modal
   }
 }
 

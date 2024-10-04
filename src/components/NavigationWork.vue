@@ -3,12 +3,11 @@ import { ref, defineProps, type PropType } from 'vue'
 import { Icons } from './Icons.vue'
 import router from '@/routes'
 import { useRoute } from 'vue-router'
-import type { SessionsI } from '@/lib/querys/interfaces'
 
 // Props para recibir las sesiones donde el usuario es anfitrión
 const props = defineProps({
   hostSessions: {
-    type: Array as PropType<SessionsI[]>,
+    type: Array as PropType<any[]>,
     default: () => []
   }
 })

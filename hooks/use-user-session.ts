@@ -47,7 +47,7 @@ export function useUserSession(token: string) {
   }
 
   const createInvitationMutation = useMutation({
-    mutationFn: async (invitation: postInvitation) => createInvitation(invitation, token),
+    mutationFn: async (invitation: any) => createInvitation(invitation, token),
     onSuccess: () => {
       // Invalidamos la cache para refrescar después de crear una nueva invitación
       queryClient.invalidateQueries({ queryKey: [QueryKey] })

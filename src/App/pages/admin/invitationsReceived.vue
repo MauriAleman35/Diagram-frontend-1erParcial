@@ -4,6 +4,17 @@ import { useRoute } from 'vue-router'
 import { useUserSession } from '../../../../hooks/use-user-session'
 import { getInvitationPendient } from '../../../../lib/querys/worskpace/userSessionQuery'
 
+// Define interfaces para el tipo de datos de las invitaciones
+interface Invitation {
+  session: {
+    id: number
+    name: string
+  }
+  user: {
+    name: string
+  }
+}
+
 // Sacamos el token del User para las APIS
 const token = localStorage.getItem('token') || ''
 const route = useRoute() // Obtenemos la ruta actual
@@ -14,14 +25,14 @@ const { getInvitationPendientQuery, acceptInvitationMutation } = useUserSession(
 
 // Variables reactivas
 const showPending = ref(true) // Estado para controlar qué lista mostrar
-const pendingInvitations = ref([]) // Lista de invitaciones pendientes
-const acceptedInvitations = ref([]) // Lista de invitaciones aceptadas
-const errorMessage = ref('')
-const isLoading = ref(false)
-const isError = ref(false)
+const pendingInvitations = ref<Invitation[]>([]) // Lista de invitaciones pendientes
+const acceptedInvitations = ref<Invitation[]>([]) // Lista de invitaciones aceptadas
+const errorMessage = ref<string>('')
+const isLoading = ref<boolean>(false)
+const isError = ref<boolean>(false)
 
 // Función para aceptar una invitación
-async function aceptarInvitacion(invitation) {
+async function aceptarInvitacion(invitation: Invitation) {
   try {
     console.log(invitation)
     await acceptInvitationMutation.mutateAsync({
@@ -45,7 +56,7 @@ async function aceptarInvitacion(invitation) {
 async function cargarInvitacionesPendientes() {
   isLoading.value = true
   try {
-    const data = await getInvitationPendient(userId, token)
+    const data: Invitation[] | undefined = await getInvitationPendient(userId, token)
     console.log(data)
     if (data) {
       pendingInvitations.value = data // Asignar las invitaciones pendientes

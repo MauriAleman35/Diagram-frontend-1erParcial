@@ -19,8 +19,8 @@ const route = useRoute() // Obtenemos la ruta actual
 const search = ref('') // Modelo para la búsqueda
 
 const UserPerfil = ref(null)
-const SessionsNashi = ref(null)
-const HostinSessions = ref(null) // Almacenar las sesiones donde el usuario es anfitrión
+const SessionsNashi = ref<any[] | undefined>(undefined)
+const HostinSessions = ref<any[] | undefined>(undefined)
 
 // Obtener el id del usuario desde los params
 const userId = Number(route.params.userId)
@@ -39,7 +39,7 @@ const dialogVisible = ref(false)
 
 // Filtrar sesiones colaborando basado en la búsqueda
 const filteredSessions = computed(() => {
-  if (SessionsNashi?.value) {
+  if (SessionsNashi.value) {
     return SessionsNashi.value.filter((session: any) =>
       session.name.toLowerCase().includes(search.value.toLowerCase())
     )
@@ -61,8 +61,8 @@ const { data: hostSessions } = getSessionsAsHostQuery(userId)
 
 // Monitorear cambios en los datos del usuario y sesiones
 watchEffect(() => {
-  SessionsNashi.value = collaboratorSessions?.value
-  HostinSessions.value = hostSessions?.value // Guardar las sesiones donde el usuario es anfitrión
+  SessionsNashi.value = collaboratorSessions?.value || null
+  HostinSessions.value = hostSessions?.value || null
   if (!isLoading.value && userData.value) {
     UserPerfil.value = userData.value
     console.log('Perfil del usuario:', UserPerfil.value)
@@ -137,17 +137,15 @@ function invitationsReceived() {
           @click="abrirDialogoCreacion"
         >
           Crear nueva Sesión
-          <Icons.add size="15" />
+          <Icons.add />
         </v-btn>
         <MenuWork :user="userData" />
       </v-app-bar>
 
-      <!-- Importar el DialogComponent -->
       <DialogCreateSession
         v-model:modelValue="dialogVisible"
         title="Crear nueva sesión"
         message="Formulario para crear una nueva sesión"
-        @submit="crearSesion"
         @close="dialogVisible = false"
       />
 

@@ -12,7 +12,7 @@ const userId = Number(route.params.userId) // Obtener el ID del usuario desde lo
 const { getSessionsAsHostQuery, createInvitationMutation } = useUserSession(token)
 
 // Variables reactivas para manejar los datos
-const hostSessions = ref([]) // Lista de sesiones donde el usuario es host
+const hostSessions = ref<any[]>([]) // Lista de sesiones donde el usuario es host
 const selectedSession = ref('') // Sesión seleccionada del select
 const email = ref('') // Correo del invitado
 const isLoading = ref(false)
@@ -60,7 +60,7 @@ onMounted(async () => {
   try {
     const { data } = getSessionsAsHostQuery(userId)
     if (data.value) {
-      hostSessions.value = data.value.map((session) => ({
+      hostSessions.value = data.value.map((session: any) => ({
         id: session.id,
         name: session.name // Asegurarse de que la propiedad 'name' existe en los datos
       }))

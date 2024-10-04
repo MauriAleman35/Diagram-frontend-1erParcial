@@ -1,7 +1,7 @@
 import api, { converToStringfy } from '../../api'
-import type { acceptInvitation, postInvitation } from '../interfaces/userSession'
+import type { acceptInvitation } from '../interfaces/userSession'
 
-export const createInvitation = async (invitation: postInvitation, token: string) => {
+export const createInvitation = async (invitation: any, token: string) => {
   try {
     const obj = {
       idhost: invitation.idhost,

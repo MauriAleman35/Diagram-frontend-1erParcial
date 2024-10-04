@@ -51,7 +51,6 @@ import {
   Bell,
   Package,
   Gauge,
-  ArrowDown,
   Building,
   Locate,
   ShoppingCart,
