@@ -152,7 +152,9 @@ const userId = Number(route.params.userId) // ID de la sesión actual (puedes ob
 // WebSocket setup
 let stompClient = null
 function connectToWebSocket() {
-  const socket = new SockJS(baseURL)
+  const socket = new SockJS(
+    `https://ytterbic-kassie-mauricioaleman-98ee6074.koyeb.app/api/ws-diagram`
+  )
   stompClient = Stomp.Stomp.over(socket)
 
   stompClient.connect(

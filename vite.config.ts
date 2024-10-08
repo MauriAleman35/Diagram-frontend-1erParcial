@@ -6,7 +6,7 @@ import NodePolyfills from 'rollup-plugin-polyfill-node'
 export default defineConfig({
   plugins: [
     vue(),
-    NodePolyfills() // Usamos rollup-plugin-polyfill-node para manejar los polyfills
+    NodePolyfills() // Polyfills para funcionalidades de Node en Vite
   ],
   resolve: {
     alias: {
@@ -18,9 +18,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000', // El backend en el puerto 3000
+        target: 'http://localhost:3000', // Proxy para el backend
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => path.replace(/^\/api/, '') // Reescribir rutas para /api
       },
       '/ws-diagram': {
         target: 'http://localhost:3000', // Proxy para WebSocket
@@ -32,13 +32,16 @@ export default defineConfig({
   optimizeDeps: {
     esbuildOptions: {
       define: {
-        global: 'globalThis' // Define global como globalThis para compatibilidad en navegador
+        global: 'globalThis' // Compatibilidad con global en el navegador
       }
     }
   },
   build: {
     rollupOptions: {
-      plugins: [NodePolyfills()] // Añadir el plugin también a las opciones de Rollup
+      external: ['vue', 'vue-router'] // Evitar problemas de duplicación de dependencias en el bundle
+    },
+    commonjsOptions: {
+      transformMixedEsModules: true // Transforma módulos mixtos ES/AMD, si es necesario para compatibilidad
     }
   }
 })
