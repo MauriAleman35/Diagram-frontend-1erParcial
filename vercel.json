@@ -14,5 +14,10 @@
     "NODE_ENV": "production"
   },
 
-  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://ytterbic-kassie-mauricioaleman-98ee6074.koyeb.app/api/$1"
+    }
+  ]
 }
