@@ -1,48 +1,49 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
-import NodePolyfills from 'rollup-plugin-polyfill-node'
+// import NodePolyfills from 'rollup-plugin-polyfill-node'; // Comentar si no es necesario
 
 export default defineConfig({
   plugins: [
-    vue(),
-    NodePolyfills() // Polyfills para funcionalidades de Node en Vite
+    vue()
+    // NodePolyfills() // Comentado o eliminado temporalmente
   ],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)), // Alias para src
-      '@lib': fileURLToPath(new URL('./lib', import.meta.url)), // Alias para lib
-      '@hooks': fileURLToPath(new URL('./src/hooks', import.meta.url)),
-      vue: 'vue/dist/vue.esm-bundler.js' // Alias para hooks
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@lib': fileURLToPath(new URL('./lib', import.meta.url)),
+      '@hooks': fileURLToPath(new URL('./src/hooks', import.meta.url))
+      // 'vue': 'vue/dist/vue.esm-bundler.js' // Eliminado este alias
     }
   },
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000', // Proxy para el backend
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '') // Reescribir rutas para /api
+        rewrite: (path) => path.replace(/^\/api/, '')
       },
       '/ws-diagram': {
-        target: 'http://localhost:3000', // Proxy para WebSocket
-        ws: true, // Habilitar WebSocket
+        target: 'http://localhost:3000',
+        ws: true,
         changeOrigin: true
       }
     }
   },
   optimizeDeps: {
+    include: ['sockjs-client'],
     esbuildOptions: {
       define: {
-        global: 'globalThis' // Compatibilidad con global en el navegador
+        global: 'globalThis'
       }
     }
   },
   build: {
-    // rollupOptions: {
-    //   external: ['vue', 'vue-router'] // Evitar problemas de duplicación de dependencias en el bundle
-    // },
+    minify: false, // Deshabilita la minificación para depuración
+    sourcemap: true, // Facilita la depuración en producción
     commonjsOptions: {
-      transformMixedEsModules: true // Transforma módulos mixtos ES/AMD, si es necesario para compatibilidad
-    }
+      transformMixedEsModules: true
+    },
+    chunkSizeWarningLimit: 1000 // Opcional: aumenta el límite de advertencia de tamaño de chunk
   }
 })
