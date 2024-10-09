@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, defineProps, computed } from 'vue'
-import * as Icons from './Icons.vue' // Importamos el objeto de íconos como `any`
+import { Icons } from '../App/utils/Icons' // Importamos el objeto de íconos como `any`
 import { logout } from '../../lib/querys/auth/authQuery'
 
 // Definir los props para recibir el 'user'

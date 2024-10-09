@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, defineProps, type PropType } from 'vue'
-import { Icons } from './Icons.vue'
+import { Icons } from '../App/utils/Icons'
 import router from '@/routes'
 import { useRoute } from 'vue-router'
 

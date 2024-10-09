@@ -2,13 +2,14 @@
 import MenuWork from '@/components/MenuWork.vue'
 import DialogCreateSession from '@/components/DialogCreateSession.vue'
 import NavigationWork from '@/components/NavigationWork.vue'
-import { Icons } from '../../../components/Icons.vue'
+
 import { ref, computed, watchEffect } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useUsers } from '../../../../hooks/use-users'
 import { useRoute } from 'vue-router'
 import { useUserSession } from '../../../../hooks/use-user-session'
 import router from '@/routes'
+import { Icons } from '../../utils/Icons'
 
 // Sacamos el token del User para las APIS
 const token = localStorage.getItem('token') || ''

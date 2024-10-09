@@ -66,7 +66,7 @@
 
 <script lang="ts" setup>
 import { ref, watch, defineProps, defineEmits } from 'vue'
-import { Icons } from './Icons.vue'
+import { Icons } from '../App/utils/Icons'
 import { useSession } from '../../hooks/use-session'
 import { useRoute } from 'vue-router'
 import type { sessionPost } from '@/lib/querys/interfaces'

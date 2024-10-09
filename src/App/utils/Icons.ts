@@ -1,4 +1,3 @@
-<script lang="ts">
 import {
   AlertTriangle,
   ArrowRight,
@@ -122,4 +121,3 @@ export const Icons = {
   listRestart: ListRestart,
   logout: LogOut
 }
-</script>

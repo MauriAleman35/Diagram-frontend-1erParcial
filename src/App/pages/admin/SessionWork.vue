@@ -118,7 +118,8 @@ import { exportDiagram } from '../../../../lib/querys/worskpace/diagramQuery'
 import { useRoute } from 'vue-router'
 import '../../utils/sessionWork.css'
 import { watchEffect } from 'vue'
-import SockJS from 'sockjs-client'
+import * as SockJS from 'sockjs-client'
+
 import * as Stomp from '@stomp/stompjs'
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api'
 // Variables y estados
@@ -151,7 +152,7 @@ const userId = Number(route.params.userId) // ID de la sesión actual (puedes ob
 // WebSocket setup
 let stompClient = null
 function connectToWebSocket() {
-  const socket = new SockJS(
+  const socket = new SockJS.default(
     `https://ytterbic-kassie-mauricioaleman-98ee6074.koyeb.app/api/ws-diagram`
   )
   stompClient = Stomp.Stomp.over(socket)
