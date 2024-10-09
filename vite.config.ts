@@ -36,13 +36,13 @@ export default defineConfig({
         global: 'globalThis' // Compatibilidad con global en el navegador
       }
     }
-  },
-  build: {
-    rollupOptions: {
-      external: ['vue', 'vue-router'] // Evitar problemas de duplicación de dependencias en el bundle
-    },
-    commonjsOptions: {
-      transformMixedEsModules: true // Transforma módulos mixtos ES/AMD, si es necesario para compatibilidad
-    }
   }
+  // build: {
+  //   rollupOptions: {
+  //     external: ['vue', 'vue-router'] // Evitar problemas de duplicación de dependencias en el bundle
+  //   },
+  //   commonjsOptions: {
+  //     transformMixedEsModules: true // Transforma módulos mixtos ES/AMD, si es necesario para compatibilidad
+  //   }
+  // }
 })
