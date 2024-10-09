@@ -12,7 +12,8 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)), // Alias para src
       '@lib': fileURLToPath(new URL('./lib', import.meta.url)), // Alias para lib
-      '@hooks': fileURLToPath(new URL('./src/hooks', import.meta.url)) // Alias para hooks
+      '@hooks': fileURLToPath(new URL('./src/hooks', import.meta.url)),
+      vue: 'vue/dist/vue.esm-bundler.js' // Alias para hooks
     }
   },
   server: {
