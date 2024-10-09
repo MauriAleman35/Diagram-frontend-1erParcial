@@ -3,7 +3,6 @@
     <!-- Panel de control a la izquierda -->
     <div class="sidebar">
       <button @click="addEntity" class="btn-sidebar">Añadir Entidad</button>
-      <button @click="exportDiagram" class="btn-sidebar">Exportar a JSON</button>
       <button @click="deleteSelected" class="btn-sidebar btn-danger">Eliminar Selección</button>
       <h3 v-if="isConnected">Conectado al WebSocket</h3>
       <button @click="updateDiagram" class="btn-sidebar btn-primary">Guardar Diagrama</button>
@@ -200,9 +199,11 @@ function connectToWebSocket() {
 
             case 'newLink': {
               diagram.model.startTransaction('addLink')
-              diagram.model.addLinkData(updatedData.linkData)
+              const existingLink = diagram.model.findLinkDataForKey(updatedData.linkData.key)
+              if (!existingLink) {
+                diagram.model.addLinkData(updatedData.linkData)
+              }
               diagram.model.commitTransaction('addLink')
-              console.log('Nueva relación agregada:', updatedData)
               break
             }
             case 'updateNode': {
@@ -226,8 +227,8 @@ function connectToWebSocket() {
               break
             }
             case 'deleteNode': {
-              console.log('Procesando eliminación de nodo:', updatedData.linkData)
-              const existingNode = diagram.model.findNodeDataForKey(updatedData.linkData.key)
+              console.log('Procesando eliminación de nodo:', updatedData.nodeData)
+              const existingNode = diagram.model.findNodeDataForKey(updatedData.nodeData.key)
               if (existingNode) {
                 diagram.model.startTransaction('deleteNode')
                 diagram.model.removeNodeData(existingNode) // Eliminar el nodo del modelo
@@ -235,6 +236,26 @@ function connectToWebSocket() {
                 console.log('Nodo eliminado en GoJS:', existingNode)
               } else {
                 console.warn('No se encontró el nodo para eliminar:', updatedData.nodeData.key)
+              }
+              break
+            }
+            case 'deleteLink': {
+              console.log('Procesando eliminación de enlace:', updatedData.linkData)
+
+              // Buscar el enlace para eliminarlo
+              const existingLink = diagram.model.linkDataArray.find(
+                (link) =>
+                  link.key === updatedData.linkData.key ||
+                  (link.from === updatedData.linkData.from && link.to === updatedData.linkData.to)
+              )
+
+              if (existingLink) {
+                diagram.model.startTransaction('deleteLink')
+                diagram.model.removeLinkData(existingLink) // Eliminar el enlace
+                diagram.model.commitTransaction('deleteLink')
+                console.log('Enlace eliminado:', existingLink)
+              } else {
+                console.warn('No se encontró el enlace para eliminar:', updatedData.linkData.key)
               }
               break
             }
@@ -250,6 +271,7 @@ function connectToWebSocket() {
     }
   )
 }
+
 const exportDiagramAsBackend = async () => {
   try {
     await exportDiagram(sessionId, token)
@@ -606,27 +628,51 @@ const updateNodeAttributes = () => {
   }
 }
 
-// Función para eliminar la selección (nodo o relación)
 const deleteSelected = () => {
+  diagram.startTransaction('Delete Selection') // Iniciar la transacción
+
   if (selectedLink.value) {
-    diagram.commandHandler.deleteSelection()
-    diagram.commitTransaction('Delete Node')
-
-    diagram.commandHandler.deleteSelection()
-    selectedLink.value = null // Limpiar la selección
+    // Si hay un enlace seleccionado, eliminarlo
+    const linkToDelete = selectedLink.value.data
+    if (linkToDelete) {
+      diagram.model.removeLinkData(linkToDelete) // Elimina el enlace
+      console.log('Enlace eliminado:', linkToDelete)
+      sendDiagramUpdate('deleteLink', { linkData: linkToDelete }) // Enviar el evento vía WebSocket
+    } else {
+      console.warn('No se encontró linkData para eliminar.')
+    }
+    selectedLink.value = null // Limpiar la selección del enlace
   } else if (selectedEntity.value) {
-    // Primero, obtener el nodo que se va a eliminar
+    // Si hay una entidad seleccionada, eliminarla junto con sus enlaces
     const nodeToDelete = selectedEntity.value.data
+    if (nodeToDelete) {
+      // Buscar y eliminar todas las relaciones (enlaces) conectadas a la entidad
+      const connectedLinks = diagram.model.linkDataArray.filter(
+        (link) => link.from === nodeToDelete.key || link.to === nodeToDelete.key
+      )
 
-    // Eliminar el nodo del diagrama
-    diagram.startTransaction('Delete Node')
+      connectedLinks.forEach((link) => {
+        diagram.model.removeLinkData(link) // Elimina cada enlace relacionado
+        console.log('Relación eliminada:', link)
+        sendDiagramUpdate('deleteLink', { linkData: link }) // Enviar el evento de eliminación de enlace vía WebSocket
+      })
 
-    // Enviar el evento de eliminación de nodo a través del WebSocket
-    sendDiagramUpdate('deleteNode', { nodeData: nodeToDelete })
+      // Eliminar la entidad (nodo) del diagrama
+      diagram.remove(diagram.findNodeForKey(nodeToDelete.key)) // Eliminar el nodo visualmente
+      diagram.model.removeNodeData(nodeToDelete) // Eliminar la entidad del modelo
+      console.log('Entidad eliminada:', nodeToDelete)
 
-    console.log('Nodo eliminado y enviado vía WebSocket:', nodeToDelete)
-    selectedEntity.value = null // Limpiar la selección
+      // Enviar el evento de eliminación de entidad vía WebSocket
+      sendDiagramUpdate('deleteNode', { nodeData: nodeToDelete })
+    } else {
+      console.warn('No se encontró nodeData para eliminar.')
+    }
+    selectedEntity.value = null // Limpiar la selección de la entidad
+  } else {
+    console.warn('No se seleccionó ninguna entidad o enlace para eliminar.')
   }
+
+  diagram.commitTransaction('Delete Selection') // Finalizar la transacción
 }
 
 // Funciones relacionadas con las relaciones
@@ -672,14 +718,14 @@ let isProcessing = false // Nueva bandera global para evitar procesamiento dupli
 
 const createRelationship = () => {
   if (isProcessing) {
-    return // Si ya estamos procesando una relación, no hacemos nada
+    return // Evitar múltiples ejecuciones simultáneas
   }
 
   if (selectedEntities.value.length === 2) {
     const fromNode = selectedEntities.value[0].data
     const toNode = selectedEntities.value[1].data
 
-    // Verificar si la relación ya existe antes de agregarla
+    // Verificar si la relación ya existe (directa o a través de una tabla intermedia)
     const existingLink = diagram.model.linkDataArray.find(
       (link) =>
         (link.from === fromNode.key && link.to === toNode.key) ||
@@ -687,61 +733,87 @@ const createRelationship = () => {
     )
 
     if (existingLink) {
-      console.warn('Relación ya existe entre los nodos seleccionados.')
-      return // Evitar la duplicación de la relación
+      console.warn('La relación ya existe entre los nodos seleccionados.')
+      return // Evitar la duplicación de relaciones
     }
 
     diagram.startTransaction('Add Relationship')
 
     let relationshipText = ''
+    let intermediateNode = null
 
-    switch (selectedRelationship.value) {
-      case 'OneToMany':
-        relationshipText = '1:*'
-        break
-      case 'OneToOne':
-        relationshipText = '1:1'
-        break
-      case 'ManyToMany':
-        relationshipText = '*:*'
-        // Crear la clase intermedia
-        {
-          const intermediateNode = {
-            key: idCounter++, // Incrementar el contador
-            name: 'Tienda_Moiso',
-            attributes: [
-              { name: 'tiendaId', type: 'int', foreignKey: true },
-              { name: 'moisoId', type: 'int', foreignKey: true }
-            ],
-            methods: []
-          }
+    if (selectedRelationship.value === 'ManyToMany') {
+      // Lógica para la relación "Muchos a Muchos"
+      relationshipText = '*:*'
 
-          diagram.model.addNodeData(intermediateNode) // Añadir el nodo intermedio
-        }
-        break
-      default:
-        relationshipText = ''
-        break
+      // Crear la tabla intermedia (solo el nombre basado en las entidades)
+      intermediateNode = {
+        key: idCounter++, // Generar ID único
+        name: `${fromNode.name}_${toNode.name}`, // Nombre basado en las dos entidades
+        attributes: [], // No se crean atributos (llaves foráneas)
+        methods: []
+      }
+
+      // Añadir la tabla intermedia
+      diagram.model.addNodeData(intermediateNode)
+
+      // Crear los enlaces entre la tabla intermedia y las dos entidades originales
+      const linkFromToIntermediate = {
+        from: fromNode.key,
+        to: intermediateNode.key,
+        relationship: 'OneToMany',
+        relationshipText: '', // No mostrar multiplicidad para la tabla intermedia
+        key: linkCounter++
+      }
+
+      const linkToToIntermediate = {
+        from: intermediateNode.key,
+        to: toNode.key,
+        relationship: 'OneToMany',
+        relationshipText: '', // No mostrar multiplicidad para la tabla intermedia
+        key: linkCounter++
+      }
+
+      // Añadir los enlaces al diagrama
+      diagram.model.addLinkData(linkFromToIntermediate)
+      diagram.model.addLinkData(linkToToIntermediate)
+
+      // Enviar las actualizaciones por WebSocket solo para los nuevos enlaces y nodo intermedio
+      sendDiagramUpdate('newNode', { nodeData: intermediateNode })
+      sendDiagramUpdate('newLink', { linkData: linkFromToIntermediate })
+      sendDiagramUpdate('newLink', { linkData: linkToToIntermediate })
+
+      console.log('Tabla intermedia creada sin llaves foráneas:', intermediateNode.name)
+    } else {
+      // Lógica para otras relaciones
+      switch (selectedRelationship.value) {
+        case 'OneToMany':
+          relationshipText = '1:*'
+          break
+        case 'OneToOne':
+          relationshipText = '1:1'
+          break
+        default:
+          relationshipText = ''
+          break
+      }
+
+      // Crear relación directa si no es "Muchos a Muchos"
+      const newLink = {
+        from: fromNode.key,
+        to: toNode.key,
+        relationship: selectedRelationship.value,
+        relationshipText: relationshipText,
+        key: linkCounter++
+      }
+
+      // Añadir la nueva relación directa
+      diagram.model.addLinkData(newLink)
+      sendDiagramUpdate('newLink', { linkData: newLink })
     }
 
-    const newLink = {
-      from: fromNode.key,
-      to: toNode.key,
-      relationship: selectedRelationship.value,
-      relationshipText: relationshipText,
-      key: linkCounter++
-    }
-
-    diagram.model.addLinkData(newLink) // Añadir la nueva relación al diagrama
     diagram.commitTransaction('Add Relationship')
-
-    // Establecer la bandera de procesamiento a true
-    isProcessing = true
-
-    // Enviar solo los datos de la nueva relación vía WebSocket
-    sendDiagramUpdate('newLink', { linkData: newLink })
-
-    console.log('Relación creada y enviada:', newLink)
+    isProcessing = true // Evitar el procesamiento duplicado
   }
 }
 
