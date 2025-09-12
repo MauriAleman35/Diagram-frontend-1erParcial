@@ -6,6 +6,7 @@ export const Login = async (auth: AuthI) => {
   try {
     const resp = await api.post('/auth/login', auth)
     const token = resp.data.data.token
+    console.log(token, 'token recibido')
     if (token !== null) {
       localStorage.setItem('token', token)
       console.log(localStorage.getItem('token'), 'token guardado')
