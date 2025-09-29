@@ -7,13 +7,17 @@ import * as Stomp from '@stomp/stompjs'
 
 import '../../utils/sessionWork.css'
 import { useDiagrams } from '../../../../hooks/use-diagram'
-import { exportDiagram } from '../../../../lib/querys/worskpace/diagramQuery'
+import {
+  exportDiagram,
+  exportDiagramXmi,
+  exportFrontendZip
+} from '../../../../lib/querys/worskpace/diagramQuery'
 
 /* ========= Relaciones (UI) ========= */
 const isCreatingRelation = ref(false)
 const relationMode = ref('')
 const selectedRelationship = ref(null)
-
+const exportingXmi = ref(false)
 /* ========= CONFIG ========= */
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api'
 const route = useRoute()
@@ -31,7 +35,8 @@ let diagram = null
 const selectedEntity = ref(null)
 let selectedNode = null
 const selectedLink = ref(null)
-
+//variable para la carga de generar backend
+const isExporting = ref(false)
 const showModal = ref(false)
 const entityName = ref('')
 
@@ -75,7 +80,18 @@ function connectToWebSocket() {
     (err) => console.error('Error WS:', err)
   )
 }
-
+async function onExportXmi() {
+  exportingXmi.value = true
+  await exportDiagramXmi(sessionId, token)
+  // listo: el navegador dispara la descarga
+}
+const exportFrontend = async () => {
+  try {
+    await exportFrontendZip(sessionId, token)
+  } catch (e) {
+    console.error('Error al exportar frontend:', e)
+  }
+}
 function sendDiagramUpdate(eventType, data) {
   if (!stompClient || !stompClient.connected) return
   const payload = { clientId, eventType, ...data }
@@ -86,7 +102,7 @@ function sendDiagramUpdate(eventType, data) {
 const { getDiagramBySessionQuery, createDiagramMutation, updateDiagramMutation } =
   useDiagrams(token)
 
-// ——— helpers: multiplicidad visible solo en 1–1 y 1–* ———
+// helpers: multiplicidad visible solo en 1–1 y 1–*
 function showMultLabel(data) {
   return data && (data.relationship === 'OneToOne' || data.relationship === 'OneToMany')
 }
@@ -169,11 +185,35 @@ async function persistDiagram() {
 }
 
 async function exportDiagramAsBackend() {
+  if (isExporting.value) return // Evitar múltiples clicks
+
+  isExporting.value = true
+
   try {
+    console.log('Iniciando exportación de backend...')
     await exportDiagram(sessionId, token)
-    console.log('ZIP exportado.')
+    console.log('Backend exportado exitosamente')
+    alert('Backend de JHipster exportado exitosamente')
   } catch (error) {
     console.error('Error al exportar:', error)
+
+    if (error.response) {
+      const status = error.response.status
+      switch (status) {
+        case 404:
+          alert('Diagrama no encontrado. Asegúrate de guardar el diagrama primero.')
+          break
+        case 500:
+          alert('Error en el servidor durante la generación. Verifica que JHipster esté instalado.')
+          break
+        default:
+          alert(`Error al exportar: ${status}`)
+      }
+    } else {
+      alert('Error de conexión al exportar el backend')
+    }
+  } finally {
+    isExporting.value = false
   }
 }
 
@@ -181,16 +221,16 @@ async function exportDiagramAsBackend() {
 function initDiagram() {
   const $ = go.GraphObject.make
 
-  // Estilo “más grande/prolijo”
+  // Estilo "más grande/prolijo"
   const FONT_BASE = '13px sans-serif'
   const FONT_HEADER = 'bold 16px sans-serif'
   const NODE_MIN_W = 240
   const NODE_MIN_H = 120
   const LINK_STROKE = 3
   const LABEL_FONT = 'bold 13px sans-serif'
-  const LABEL_BG = 'white'
-  const ARROW_SCALE = 1.6
 
+  const ARROW_SCALE = 1.6
+  setMultiplicity()
   diagram = $(go.Diagram, diagramDiv.value, {
     'undoManager.isEnabled': true,
     model: $(go.GraphLinksModel, { linkKeyProperty: 'key' }),
@@ -255,6 +295,32 @@ function initDiagram() {
 
     link.isSelected = true
   })
+
+  function setMultiplicity(linkPart, side, value) {
+    if (!(linkPart instanceof go.Link)) return
+    const ld = linkPart.data
+    if (!ld) return
+
+    // Solo mostramos/guardamos multiplicidad para 1–1 y 1–*
+    if (ld.relationship !== 'OneToOne' && ld.relationship !== 'OneToMany') return
+
+    diagram.startTransaction('Set Multiplicity')
+    if (side === 'from') {
+      diagram.model.setDataProperty(ld, 'fromMult', value)
+    } else {
+      diagram.model.setDataProperty(ld, 'toMult', value)
+    }
+    diagram.commitTransaction('Set Multiplicity')
+
+    // Notifica por WebSocket (tu función ya existe)
+    sendDiagramUpdate('updateLink', {
+      linkData: { key: ld.key, fromMult: ld.fromMult, toMult: ld.toMult }
+    })
+
+    // Si querés persistir al toque (sin esperar al botón “Guardar”),
+    // descomenta esta línea:
+    // persistDiagram();
+  }
 
   function showPorts(node, show) {
     if (!node || !node.ports) return
@@ -427,9 +493,21 @@ function initDiagram() {
     $(
       go.Shape,
       new go.Binding('fromArrow', 'relationship', getFromArrow),
-      new go.Binding('fill', 'relationship', getFromArrowFill),
-      { stroke: 'black' },
-      new go.Binding('scale', 'styleScale', (s) => s || ARROW_SCALE)
+      // fill: blanco para Agregación, negro para Composición, vacío para otros
+      new go.Binding('fill', 'relationship', (rel) =>
+        rel === 'Agregacion' ? '#fff' : rel === 'Composicion' ? '#000' : null
+      ),
+      // stroke: blanco para Agregación (para que se vea “puro”), negro para el resto
+      new go.Binding('stroke', 'relationship', (rel) => (rel === 'Agregacion' ? '#fff' : '#000')),
+      // tamaño grande sólo para rombos
+      new go.Binding('scale', '', (d) =>
+        d.relationship === 'Agregacion' || d.relationship === 'Composicion'
+          ? 2.4
+          : d.styleScale || ARROW_SCALE
+      ),
+      new go.Binding('strokeWidth', '', (d) =>
+        d.relationship === 'Agregacion' || d.relationship === 'Composicion' ? 2.5 : 1.5
+      )
     ),
 
     // multiplicidad "from"
@@ -437,14 +515,15 @@ function initDiagram() {
       go.TextBlock,
       {
         segmentIndex: 0,
-        segmentOffset: new go.Point(0, -20),
+        segmentOffset: new go.Point(15, -25),
         font: LABEL_FONT,
-        background: LABEL_BG,
-        margin: 2,
+        background: null,
+        margin: 0,
         stroke: '#111'
       },
       new go.Binding('visible', '', (d) => showMultLabel(d)),
-      new go.Binding('text', 'fromMult', (t) => t || '1')
+      new go.Binding('text', 'fromMult', (t) => t || '1'),
+      new go.Binding('scale', 'fromMult', (m) => (m && m.includes('*') ? 4.35 : 1))
     ),
 
     // multiplicidad "to"
@@ -452,15 +531,46 @@ function initDiagram() {
       go.TextBlock,
       {
         segmentIndex: -1,
-        segmentOffset: new go.Point(0, -20),
+        segmentOffset: new go.Point(-8, -25),
         font: LABEL_FONT,
-        background: LABEL_BG,
-        margin: 2,
+        background: null,
+        margin: 0,
         stroke: '#111'
       },
       new go.Binding('visible', '', (d) => showMultLabel(d)),
-      new go.Binding('text', 'toMult', (t) => t || '1')
-    )
+      new go.Binding('text', 'toMult', (t) => t || '1'),
+      new go.Binding('scale', 'toMult', (m) => (m && m.includes('*') ? 1.85 : 1))
+    ),
+
+    {
+      contextMenu: $(
+        'ContextMenu',
+        $('ContextMenuButton', $(go.TextBlock, 'from: 1'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'from', '1')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'from: 0..1'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'from', '0..1')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'from: 1..*'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'from', '1..*')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'from: 0..*'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'from', '0..*')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'to: 1'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'to', '1')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'to: 0..1'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'to', '0..1')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'to: 1..*'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'to', '1..*')
+        }),
+        $('ContextMenuButton', $(go.TextBlock, 'to: 0..*'), {
+          click: (e, obj) => setMultiplicity(obj.part.adornedPart, 'to', '0..*')
+        })
+      )
+    }
   )
 
   // Adorno de selección: iconos para editar multiplicidad (solo si aplica)
@@ -581,8 +691,10 @@ function initDiagram() {
   }
 
   // Defaults por tipo (sin relationshipText)
+  // Modificar setupLinkByRelationType para incluir recursividad
   function setupLinkByRelationType(linkData, relationType) {
     const updated = { ...linkData }
+
     switch (relationType) {
       case 'OneToOne':
         updated.relationship = 'OneToOne'
@@ -597,13 +709,20 @@ function initDiagram() {
       case 'ManyToMany':
         handleManyToManyRelation(linkData)
         return null
+      case 'Recursividad':
+        // Validar que sea hacia la misma entidad
+        if (linkData.from === linkData.to) {
+          handleRecursiveRelation(linkData)
+          return null
+        } else {
+          alert('La relación recursiva debe ser de una entidad hacia sí misma')
+          return null
+        }
       case 'Generalizacion':
       case 'Agregacion':
       case 'Composicion':
-      case 'Recursividad':
       case 'Dependencia':
         updated.relationship = relationType
-        // sin multiplicidades por defecto
         delete updated.fromMult
         delete updated.toMult
         break
@@ -612,12 +731,13 @@ function initDiagram() {
         updated.fromMult = '1'
         updated.toMult = '1'
     }
+
     updated.styleScale = updated.styleScale || 1.6
     updated.key = updated.key ?? linkCounter++
     return updated
   }
 
-  // M:N: asteriscos en la tabla intermedia y “1” en las externas
+  // M:N: CORREGIDO - Crea tabla intermedia con FK automáticas
   function handleManyToManyRelation(linkData) {
     diagram.startTransaction('ManyToMany')
     diagram.model.removeLinkData(linkData)
@@ -632,18 +752,38 @@ function initDiagram() {
     const midX = (a.location.x + b.location.x) / 2
     const midY = (a.location.y + b.location.y) / 2
 
+    // Crear tabla intermedia con FK automáticas y marcadas como tales
     const interNode = {
       key: idCounter++,
       name: `${a.data.name}_${b.data.name}`,
-      attributes: [],
+      attributes: [
+        // FK hacia la primera entidad
+        {
+          name: `id${a.data.name}`,
+          type: 'int',
+          primaryKey: true, // Parte de clave compuesta
+          foreignKey: true,
+          referencedEntity: a.data.name,
+          referencedKey: a.data.key
+        },
+        // FK hacia la segunda entidad
+        {
+          name: `id${b.data.name}`,
+          type: 'int',
+          primaryKey: true, // Parte de clave compuesta
+          foreignKey: true,
+          referencedEntity: b.data.name,
+          referencedKey: b.data.key
+        }
+      ],
       methods: [],
       loc: `${midX} ${midY}`,
-      userSized: false
+      userSized: false,
+      isIntermediateTable: true // Marca para identificarla
     }
     diagram.model.addNodeData(interNode)
 
-    // IMPORTANTE: ambos enlaces apuntan HACIA la intermedia (to = interNode)
-    // así los '*' quedan en la tabla intermedia y los '1' junto a las externas
+    // Crear enlaces OneToMany desde cada entidad hacia la intermedia
     const l1 = {
       from: a.data.key,
       to: interNode.key,
@@ -651,7 +791,8 @@ function initDiagram() {
       fromMult: '1',
       toMult: '*',
       styleScale: 1.6,
-      key: linkCounter++
+      key: linkCounter++,
+      isManyToManyPart: true // Marca para identificar
     }
     const l2 = {
       from: b.data.key,
@@ -660,7 +801,8 @@ function initDiagram() {
       fromMult: '1',
       toMult: '*',
       styleScale: 1.6,
-      key: linkCounter++
+      key: linkCounter++,
+      isManyToManyPart: true // Marca para identificar
     }
 
     diagram.model.addLinkData(l1)
@@ -672,7 +814,56 @@ function initDiagram() {
     sendDiagramUpdate('newLink', { linkData: l2 })
   }
 }
+// Nueva función específica para recursividad
+function handleRecursiveRelation(linkData) {
+  const entity = diagram.findNodeForKey(linkData.from)
+  if (!entity || linkData.from !== linkData.to) {
+    console.warn('Relación recursiva debe ser de una entidad hacia sí misma')
+    return
+  }
 
+  diagram.startTransaction('Recursive Relation')
+
+  // Agregar campo FK recursivo a la misma entidad
+  const currentAttrs = entity.data.attributes || []
+
+  // Verificar si ya tiene FK recursivo
+  const hasRecursiveFK = currentAttrs.some(
+    (attr) => attr.foreignKey && attr.referencedEntity === entity.data.name
+  )
+
+  if (!hasRecursiveFK) {
+    const recursiveAttr = {
+      name: `id${entity.data.name}Parent`,
+      type: 'int',
+      primaryKey: false,
+      foreignKey: true,
+      referencedEntity: entity.data.name,
+      referencedKey: entity.data.key,
+      nullable: true // FK recursivo suele ser nullable
+    }
+
+    const updatedAttrs = [...currentAttrs, recursiveAttr]
+    diagram.model.setDataProperty(entity.data, 'attributes', updatedAttrs)
+  }
+
+  // Crear el enlace recursivo visual
+  const recursiveLink = {
+    from: entity.data.key,
+    to: entity.data.key,
+    relationship: 'Recursividad',
+    styleScale: 1.6,
+    key: linkCounter++,
+    isRecursive: true // Marca especial
+  }
+
+  diagram.model.addLinkData(recursiveLink)
+  diagram.commitTransaction('Recursive Relation')
+
+  // Notificar cambios
+  sendDiagramUpdate('updateNode', { nodeData: entity.data })
+  sendDiagramUpdate('newLink', { linkData: recursiveLink })
+}
 /* ========= Acciones UI ========= */
 function addEntity() {
   diagram.startTransaction('Add Entity')
@@ -1051,19 +1242,36 @@ onBeforeUnmount(() => {
 
       <!-- Controles generales -->
       <div class="general-controls">
-        <button
+        <!-- <button
           @click="toggleResizeMode"
           :class="['btn-sidebar', 'btn-mode', { 'btn-active': resizeMode }]"
         >
           <span class="btn-icon"></span>
           {{ resizeMode ? 'Desactivar Redimensionar' : 'Modo Redimensionar' }}
-        </button>
+        </button> -->
 
-        <button @click="exportDiagramAsBackend" class="btn-sidebar btn-export">
+        <button
+          @click="exportDiagramAsBackend"
+          class="btn-sidebar btn-export"
+          :disabled="isExporting"
+          :class="{ 'btn-loading': isExporting }"
+        >
           <span class="btn-icon"></span>
-          Exportar Backend
+          {{ isExporting ? 'Generando Backend...' : 'Exportar Backend' }}
         </button>
-
+        <button class="btn-sidebar btn-export" @click="exportFrontend">
+          <span class="btn-icon"></span>
+          Exportar Frontend
+        </button>
+        <button
+          class="btn-sidebar btn-export"
+          :disabled="exportingXmi"
+          @click="onExportXmi"
+          title="Exportar XMI (Enterprise Architect)"
+        >
+          <span class="btn-icon"></span>
+          {{ exportingXmi ? 'Exportando...' : 'Exportar XMI (EA)' }}
+        </button>
         <button @click="goBack" class="btn-sidebar btn-back">
           <span class="btn-icon"></span>
           Volver Atrás
@@ -1145,7 +1353,7 @@ onBeforeUnmount(() => {
           @click="selectRelationship('Agregacion')"
           :class="['btn-relation', { active: relationMode === 'Agregacion' }]"
         >
-          <span class="relation-icon">◇</span>
+          <span class="relation-icon"></span>
           <span class="relation-text">Agregación</span>
         </button>
 
@@ -1205,6 +1413,23 @@ onBeforeUnmount(() => {
               Atributos
             </h4>
 
+            <!-- Mostrar aviso si es tabla intermedia -->
+            <div
+              v-if="selectedEntity && selectedEntity.data.isIntermediateTable"
+              class="intermediate-table-notice"
+            >
+              <div class="notice-content">
+                <span class="notice-icon">⚠️</span>
+                <div class="notice-text">
+                  <strong>Tabla Intermedia (Many-to-Many)</strong>
+                  <p>
+                    Esta tabla ya tiene las claves foráneas automáticas. Puedes agregar campos
+                    adicionales si necesitas.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div class="attribute-form">
               <div class="form-row">
                 <input
@@ -1262,6 +1487,7 @@ onBeforeUnmount(() => {
                   v-for="(attr, index) in attributes"
                   :key="index"
                   class="item-card attribute-card"
+                  :class="{ 'auto-generated': attr.referencedEntity }"
                 >
                   <div class="item-info">
                     <span class="item-name">{{ attr.name }}</span>
@@ -1269,15 +1495,23 @@ onBeforeUnmount(() => {
                     <div class="item-badges">
                       <span v-if="attr.primaryKey" class="badge badge-pk">PK</span>
                       <span v-if="attr.foreignKey" class="badge badge-fk">FK</span>
+                      <span v-if="attr.referencedEntity" class="badge badge-auto">AUTO</span>
+                    </div>
+                    <div v-if="attr.referencedEntity" class="reference-info">
+                      → {{ attr.referencedEntity }}
                     </div>
                   </div>
                   <button
+                    v-if="!attr.referencedEntity"
                     @click="removeAttribute(index)"
                     class="btn-remove"
                     title="Eliminar atributo"
                   >
                     <span class="remove-icon"></span>
                   </button>
+                  <span v-else class="auto-field-indicator" title="Campo generado automáticamente">
+                    🔒
+                  </span>
                 </div>
               </div>
             </div>
@@ -1350,6 +1584,25 @@ onBeforeUnmount(() => {
             <span class="btn-icon"></span>
             Cancelar
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de carga para exportación -->
+    <div v-if="isExporting" class="modal-overlay loading-overlay">
+      <div class="loading-modal">
+        <div class="loading-content">
+          <div class="spinner"></div>
+          <h3 class="loading-title">Generando Backend</h3>
+          <p class="loading-description">
+            JHipster está generando tu backend... Esto puede tardar 1-2 minutos.
+          </p>
+          <div class="loading-progress">
+            <div class="progress-bar">
+              <div class="progress-fill"></div>
+            </div>
+            <p class="progress-text">Por favor no cierres ni actualices la página</p>
+          </div>
         </div>
       </div>
     </div>
