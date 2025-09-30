@@ -295,30 +295,42 @@ function initDiagram() {
   diagram.addDiagramListener('LinkDrawn', (e) => {
     const link = e.subject
     if (!link) return
-    // ⬇️ Caso especial: Recursividad
+
+    // 🔧 declarar type ANTES de usarlo
+    const type = relationMode.value || link.data.relationship || 'OneToOne'
+
+    // ⬇️ Caso especial: Recursividad (solo self link, con curvatura)
     if (type === 'Recursividad') {
       const ld = link.data
+      const entity = diagram.findNodeForKey(ld.from) // self-link: from === to
       diagram.startTransaction('Setup Recursive')
+
+      // 1) asegurar la FK recursiva en la entidad
+      ensureRecursiveForeignKey(entity)
+
+      // 2) configuración del link (curvo + multiplicidades)
       diagram.model.setDataProperty(ld, 'relationship', 'Recursividad')
       diagram.model.setDataProperty(ld, 'fromMult', ld.fromMult || '0..*') // hijos
       diagram.model.setDataProperty(ld, 'toMult', ld.toMult || '0..1') // padre
       diagram.model.setDataProperty(ld, 'curviness', 40)
       diagram.model.setDataProperty(ld, 'fromEndSegmentLength', 30)
       diagram.model.setDataProperty(ld, 'toEndSegmentLength', 30)
-      // nunca uses flags ad-hoc como isRecursive
+
       diagram.commitTransaction('Setup Recursive')
+
       sendDiagramUpdate('newLink', { linkData: ld })
       if (isCreatingRelation.value) deactivateRelationMode()
       link.isSelected = true
-      return // ⬅️ evita que tu flujo genérico cree un segundo link
+      return
     }
-    const type = relationMode.value || link.data.relationship || 'OneToOne'
+    // ⬇️ Caso especial: Muchos a Muchos — crear tabla intermedia y DOS OneToMany
     if (type === 'ManyToMany') {
       handleManyToManyRelation(link.data)
       if (isCreatingRelation.value) deactivateRelationMode()
       return
     }
 
+    // Resto de tipos
     const patched = setupLinkByRelationType(link.data, type)
     if (patched) {
       ensureLinkMultiplicities(patched)
@@ -330,10 +342,8 @@ function initDiagram() {
       sendDiagramUpdate('newLink', { linkData: link.data })
     }
     if (isCreatingRelation.value) deactivateRelationMode()
-
     link.isSelected = true
   })
-
   function setMultiplicity(linkPart, side, value) {
     if (!(linkPart instanceof go.Link)) return
     const ld = linkPart.data
@@ -774,18 +784,14 @@ function initDiagram() {
         updated.fromMult = '1'
         updated.toMult = '*'
         break
-      case 'ManyToMany':
-        handleManyToManyRelation(linkData)
-        return null
       case 'Recursividad':
-        // Validar que sea hacia la misma entidad
+        // validá self-link; si no es self, abortá
         if (linkData.from === linkData.to) {
           handleRecursiveRelation(linkData)
-          return null
         } else {
           alert('La relación recursiva debe ser de una entidad hacia sí misma')
-          return null
         }
+        return null
       case 'Generalizacion':
       case 'Agregacion':
       case 'Composicion':
@@ -1155,6 +1161,15 @@ function deactivateRelationMode() {
   isCreatingRelation.value = false
   relationMode.value = ''
   selectedRelationship.value = null
+
+  // 🔧 restaurar validaciones si venías de recursividad
+  if (diagram?.toolManager?.linkingTool) {
+    diagram.toolManager.linkingTool.linkValidation = prevLinkValidation || null
+  }
+  if (diagram?.toolManager?.relinkingTool) {
+    diagram.toolManager.relinkingTool.linkValidation = prevRelinkValidation || null
+  }
+
   if (diagram?.div) diagram.div.style.cursor = 'default'
   if (diagram) {
     diagram.nodes.each((node) => {
@@ -1162,6 +1177,35 @@ function deactivateRelationMode() {
       node.ports.each((p) => (p.visible = keep))
     })
   }
+}
+function ensureRecursiveForeignKey(entityNode) {
+  if (!entityNode) return
+  const attrs = Array.isArray(entityNode.data.attributes) ? entityNode.data.attributes : []
+
+  // ¿ya existe una FK que referencie a sí misma?
+  const exists = attrs.some(
+    (a) =>
+      a.foreignKey &&
+      a.referencedEntity === entityNode.data.name &&
+      a.referencedKey === entityNode.data.key
+  )
+  if (exists) return
+
+  const fkAttr = {
+    name: `id${entityNode.data.name}Parent`,
+    type: 'int',
+    primaryKey: false,
+    foreignKey: true,
+    referencedEntity: entityNode.data.name,
+    referencedKey: entityNode.data.key,
+    nullable: true
+  }
+
+  const next = [...attrs, fkAttr]
+  diagram.model.setDataProperty(entityNode.data, 'attributes', next)
+
+  // notificar (por si otro cliente está mirando)
+  sendDiagramUpdate('updateNode', { nodeData: entityNode.data })
 }
 
 /* ========= WS: APLICACIÓN DE UPDATES ========= */
