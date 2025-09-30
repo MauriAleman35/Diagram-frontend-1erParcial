@@ -2,17 +2,18 @@
   "version": 2,
   "builds": [
     {
-      "src": "package.json",
+      "src": "vite.config.*",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "dist",
-        "buildCommand": "pnpm build"
+        "buildCommand": "pnpm run build"
       }
     }
   ],
-  "env": {
-    "NODE_ENV": "production"
-  },
-
-  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
 }
