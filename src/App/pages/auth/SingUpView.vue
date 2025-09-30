@@ -101,11 +101,12 @@ const handleCrete = async () => {
           <span class="ml-4"> Iniciar sesión con Google</span>
         </div>
       </button>
-
-      <p class="mt-8">
-        ¿Ya tienes una cuenta?
-        <a href="#" class="text-blue-500 hover:text-blue-700 font-semibold">Iniciar sesión</a>
-      </p>
+      <RouterLink to="/login">
+        <p class="mt-8">
+          ¿Ya tienes una cuenta?
+          <a href="#" class="text-blue-500 hover:text-blue-700 font-semibold">Iniciar sesión</a>
+        </p>
+      </RouterLink>
     </div>
   </div>
 </template>

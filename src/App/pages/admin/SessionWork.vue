@@ -31,7 +31,9 @@ const clientId =
 /* ========= ESTADO ========= */
 const diagramDiv = ref(null)
 let diagram = null
-
+let prevLinkValidation = null
+let prevRelinkValidation = null
+const isExportingFrontend = ref(false)
 const selectedEntity = ref(null)
 let selectedNode = null
 const selectedLink = ref(null)
@@ -86,12 +88,25 @@ async function onExportXmi() {
   // listo: el navegador dispara la descarga
 }
 const exportFrontend = async () => {
+  if (isExportingFrontend.value) return
   try {
+    isExportingFrontend.value = true
+    // (opcional) si quieres reutilizar el mismo overlay de “Generando Backend”:
+    // isExporting.value = true
+    // puedes cambiarle el título/descripcion si los parametrizas (ver paso 3 opcional)
+
     await exportFrontendZip(sessionId, token)
+
+    alert('Frontend exportado exitosamente')
   } catch (e) {
     console.error('Error al exportar frontend:', e)
+    alert('Ocurrió un error al exportar el frontend')
+  } finally {
+    isExportingFrontend.value = false
+    // isExporting.value = false // si reutilizaste el mismo overlay
   }
 }
+
 function sendDiagramUpdate(eventType, data) {
   if (!stompClient || !stompClient.connected) return
   const payload = { clientId, eventType, ...data }
@@ -109,6 +124,13 @@ function showMultLabel(data) {
 
 // Normaliza SOLO cuando toca: 1–1 y 1–*; el resto SIN etiquetas
 function ensureLinkMultiplicities(l) {
+  // ← Añade esto arriba del todo:
+  if (l.relationship === 'Recursividad') {
+    l.fromMult = l.fromMult || ''
+    delete l.toMult // no mostramos el lado “to” en recursividad
+    l.styleScale = l.styleScale || 1.3
+    return
+  }
   if (!l) return
   // migración desde relationshipText (si existiera) SOLO para O2O / O2M
   if ((!l.fromMult || !l.toMult) && l.relationshipText && l.relationshipText.includes(':')) {
@@ -273,7 +295,23 @@ function initDiagram() {
   diagram.addDiagramListener('LinkDrawn', (e) => {
     const link = e.subject
     if (!link) return
-
+    // ⬇️ Caso especial: Recursividad
+    if (type === 'Recursividad') {
+      const ld = link.data
+      diagram.startTransaction('Setup Recursive')
+      diagram.model.setDataProperty(ld, 'relationship', 'Recursividad')
+      diagram.model.setDataProperty(ld, 'fromMult', ld.fromMult || '0..*') // hijos
+      diagram.model.setDataProperty(ld, 'toMult', ld.toMult || '0..1') // padre
+      diagram.model.setDataProperty(ld, 'curviness', 40)
+      diagram.model.setDataProperty(ld, 'fromEndSegmentLength', 30)
+      diagram.model.setDataProperty(ld, 'toEndSegmentLength', 30)
+      // nunca uses flags ad-hoc como isRecursive
+      diagram.commitTransaction('Setup Recursive')
+      sendDiagramUpdate('newLink', { linkData: ld })
+      if (isCreatingRelation.value) deactivateRelationMode()
+      link.isSelected = true
+      return // ⬅️ evita que tu flujo genérico cree un segundo link
+    }
     const type = relationMode.value || link.data.relationship || 'OneToOne'
     if (type === 'ManyToMany') {
       handleManyToManyRelation(link.data)
@@ -474,22 +512,39 @@ function initDiagram() {
       deletable: true
     },
 
+    // === Overrides para Recursividad (bucle curvo prolijo) ===
+    new go.Binding('routing', 'relationship', (rel) =>
+      rel === 'Recursividad' ? go.Link.Normal : go.Link.AvoidsNodes
+    ),
+    new go.Binding('curve', 'relationship', (rel) =>
+      rel === 'Recursividad' ? go.Link.Bezier : go.Link.JumpOver
+    ),
+    new go.Binding('curviness', '', (d) =>
+      d.relationship === 'Recursividad' ? (d.curviness ?? 40) : undefined
+    ),
+    new go.Binding('fromEndSegmentLength', '', (d) =>
+      d.relationship === 'Recursividad' ? 30 : undefined
+    ),
+    new go.Binding('toEndSegmentLength', '', (d) =>
+      d.relationship === 'Recursividad' ? 30 : undefined
+    ),
+
+    // Línea principal
     $(
       go.Shape,
       { isPanelMain: true, strokeWidth: LINK_STROKE },
       new go.Binding('strokeDashArray', 'relationship', getDashArray)
     ),
 
+    // Flecha en el extremo "to" (generalización, etc.)
     $(
       go.Shape,
       new go.Binding('toArrow', 'relationship', getArrowType),
-      {
-        stroke: 'black',
-        fill: 'black'
-      },
+      { stroke: 'black', fill: 'black' },
       new go.Binding('scale', 'styleScale', (s) => s || ARROW_SCALE)
     ),
 
+    // Flecha en el extremo "from" (rombos para agregación/composición)
     $(
       go.Shape,
       new go.Binding('fromArrow', 'relationship', getFromArrow),
@@ -510,23 +565,27 @@ function initDiagram() {
       )
     ),
 
-    // multiplicidad "from"
+    // === multiplicidad "from" ===
     $(
       go.TextBlock,
       {
         segmentIndex: 0,
-        segmentOffset: new go.Point(15, -25),
+        segmentOffset: new go.Point(25, -25),
         font: LABEL_FONT,
         background: null,
         margin: 0,
         stroke: '#111'
       },
-      new go.Binding('visible', '', (d) => showMultLabel(d)),
+      // En recursividad mostramos SOLO este lado; en el resto usa regla normal
+      new go.Binding('visible', '', (d) =>
+        d.relationship === 'Recursividad' ? true : showMultLabel(d)
+      ),
       new go.Binding('text', 'fromMult', (t) => t || '1'),
-      new go.Binding('scale', 'fromMult', (m) => (m && m.includes('*') ? 4.35 : 1))
+      // agrandar el asterisco sin cambiar fuente
+      new go.Binding('scale', 'fromMult', (m) => (m && m.includes('*') ? 1.35 : 1))
     ),
 
-    // multiplicidad "to"
+    // === multiplicidad "to" ===
     $(
       go.TextBlock,
       {
@@ -537,11 +596,15 @@ function initDiagram() {
         margin: 0,
         stroke: '#111'
       },
-      new go.Binding('visible', '', (d) => showMultLabel(d)),
+      // En recursividad ocultamos este lado
+      new go.Binding('visible', '', (d) =>
+        d.relationship === 'Recursividad' ? false : showMultLabel(d)
+      ),
       new go.Binding('text', 'toMult', (t) => t || '1'),
       new go.Binding('scale', 'toMult', (m) => (m && m.includes('*') ? 1.85 : 1))
     ),
 
+    // === Menú contextual para editar multiplicidades ===
     {
       contextMenu: $(
         'ContextMenu',
@@ -684,6 +747,11 @@ function initDiagram() {
       toSpot: spot,
       fromLinkable: true,
       toLinkable: true,
+      // ⬇️ habilitar self-links y duplicados por puerto
+      fromLinkableSelfNode: true,
+      toLinkableSelfNode: true,
+      fromLinkableDuplicates: true,
+      toLinkableDuplicates: true,
       cursor: 'pointer',
       alignment: spot,
       visible: false
@@ -1029,12 +1097,45 @@ function selectRelationship(type) {
   isCreatingRelation.value = true
   selectedRelationship.value = type
 
+  if (type === 'Recursividad') {
+    // guardar validadores actuales
+    prevLinkValidation = diagram.toolManager.linkingTool.linkValidation
+    prevRelinkValidation = diagram.toolManager.relinkingTool?.linkValidation
+
+    // solo permitir fromNode === toNode mientras esté activo el modo
+    const onlySelf = (fromNode, fromPort, toNode, toPort, link) => fromNode === toNode
+    diagram.toolManager.linkingTool.linkValidation = onlySelf
+    if (diagram.toolManager.relinkingTool) {
+      diagram.toolManager.relinkingTool.linkValidation = (
+        goodLink,
+        fromNode,
+        fromPort,
+        toNode,
+        toPort
+      ) => fromNode === toNode
+    }
+
+    // arquetipo específico (con “1” si querés que se vea)
+    diagram.toolManager.linkingTool.archetypeLinkData = {
+      key: undefined,
+      relationship: 'Recursividad',
+      fromMult: '0..*',
+      toMult: '1',
+      styleScale: 1.6
+    }
+
+    if (diagram?.div) diagram.div.style.cursor = 'crosshair'
+    return
+  }
+
+  // resto de tipos normales
   const archetype = setupLinkArchetype(type)
   if (archetype && diagram?.toolManager?.linkingTool) {
     diagram.toolManager.linkingTool.archetypeLinkData = archetype
   }
   if (diagram?.div) diagram.div.style.cursor = 'crosshair'
 }
+
 function setupLinkArchetype(type) {
   const base = { key: undefined, styleScale: 1.6 }
   const map = {
@@ -1259,9 +1360,15 @@ onBeforeUnmount(() => {
           <span class="btn-icon"></span>
           {{ isExporting ? 'Generando Backend...' : 'Exportar Backend' }}
         </button>
-        <button class="btn-sidebar btn-export" @click="exportFrontend">
+        <button
+          class="btn-sidebar btn-export"
+          :disabled="isExportingFrontend"
+          :class="{ 'btn-loading': isExportingFrontend }"
+          @click="exportFrontend"
+          title="Exportar Frontend"
+        >
           <span class="btn-icon"></span>
-          Exportar Frontend
+          {{ isExportingFrontend ? 'Generando Frontend...' : 'Exportar Frontend' }}
         </button>
         <button
           class="btn-sidebar btn-export"
